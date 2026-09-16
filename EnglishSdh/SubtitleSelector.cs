@@ -7,7 +7,31 @@ public static class SubtitleSelector
 {
     private static readonly Regex Separators = new("[^a-z0-9]+", RegexOptions.CultureInvariant,
         TimeSpan.FromMilliseconds(100));
-    public static bool IsEnglish(string? language) => language?.Trim().ToLowerInvariant() is "en" or "eng" or "english";
+    public static bool IsEnglish(string? language)
+    {
+        var tag = language?.Trim();
+        if (string.IsNullOrEmpty(tag)) return false;
+        if (tag.Equals("en", StringComparison.OrdinalIgnoreCase)
+            || tag.Equals("eng", StringComparison.OrdinalIgnoreCase)
+            || tag.Equals("english", StringComparison.OrdinalIgnoreCase)) return true;
+        // Match the primary language, not arbitrary strings starting with "en".
+        var separator = tag.IndexOf('-');
+        if (separator < 0) return false;
+        var primary = tag.AsSpan(0, separator);
+        if (!primary.Equals("en", StringComparison.OrdinalIgnoreCase)
+            && !primary.Equals("eng", StringComparison.OrdinalIgnoreCase)) return false;
+        var subtagLength = 0;
+        foreach (var character in tag.AsSpan(separator + 1))
+        {
+            if (character == '-')
+            {
+                if (subtagLength == 0) return false;
+                subtagLength = 0;
+            }
+            else if (!char.IsAsciiLetterOrDigit(character) || ++subtagLength > 8) return false;
+        }
+        return subtagLength > 0;
+    }
     private static string[] Words(string? title) => Separators.Split((title ?? "").ToLowerInvariant());
     private static bool Negated(string[] words, int i) => i > 0 && words[i - 1] is "non" or "not" or "no" or "without";
     private static bool HasLabel(string? title, bool hearing)

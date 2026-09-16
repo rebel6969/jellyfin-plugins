@@ -10,13 +10,13 @@ Use the package and manifest in this directory's `dist/` and `manifest.json`. In
 
 Install **English SDH Preference**, restart Jellyfin, then open the plugin configuration page. Enable it and select users. It is disabled with no users selected by default. Existing Language Failover or other automatic subtitle-switching plugins should not also be enabled for the same users.
 
-Manual install: stop Jellyfin; extract the release ZIP into a new `EnglishSdh_1.0.0.0` directory under the server's plugins directory; restart. Do not overwrite another plugin. Keep a stopped-server backup first.
+Manual install: stop Jellyfin; extract the release ZIP into a new `EnglishSdh_1.0.0.1` directory under the server's plugins directory; restart. Do not overwrite another plugin. Keep a stopped-server backup first.
 
 ## Behavior
 
 - At PlaybackStart, wait 1.5 seconds for client initialization, then send at most one `SetSubtitleStreamIndex` command.
 - Require the current session user to be opted in and the client to advertise this command.
-- Match English language metadata (`en`, `eng`, `English`), not guesses from the title.
+- Match English language metadata (`en`, `eng`, `English`, and hyphenated regional tags such as `en-US`, `en-GB`, `eng-US`), not guesses from the title.
 - Prefer the hearing-impaired flag; recognize SDH, CC, HI, hearing-impaired and closed-caption title labels. Exclude English `forced` labels/flags and commentary titles; ignore negated labels such as `non-SDH` and `non-forced`.
 - Among equivalent tracks prefer SDH, then the hearing-impaired flag, default flag, and lowest stream index.
 - No eligible English/full track: leave the client's choice untouched, including forced-only content.
@@ -31,7 +31,7 @@ Do not use it to solve failed video playback. It is not a universal client compa
 
 ## Build and tests
 
-.NET SDK 10; Jellyfin.Controller and Jellyfin.Model pinned to 12.1.0. Production assembly version: 1.0.0.0. Unique plugin ID: `36dab5c5-2396-4b09-9c63-a46c56288c68`.
+.NET SDK 10; Jellyfin.Controller and Jellyfin.Model pinned to 12.1.0. Production assembly version: 1.0.0.1. Unique plugin ID: `36dab5c5-2396-4b09-9c63-a46c56288c68`.
 
 ```sh
 dotnet test EnglishSdh.Tests/EnglishSdh.Tests.csproj -c Release
@@ -40,7 +40,7 @@ dotnet build EnglishSdh/EnglishSdh.csproj -c Release
 
 Build used `mcr.microsoft.com/dotnet/sdk@sha256:2fa828c68761b1b8c23d7662dc134421b9d3b59fe1425fdbc80804e390cdb24d`.
 
-Verification: 43 automated tests, including negative controls, duplicate events, stopped/changed playback, manual-selection protection and logged command failure. A separate Jellyfin 12.1.0 instance with synthetic media loaded the plugin and sent index 3 (English SDH) instead of index 2 (regular English) to an authenticated WebSocket test client. This proves the server/plugin command path, not every actual player. No production media or credentials were used in that sandbox.
+Verification: 61 automated tests, including negative controls, duplicate events, stopped/changed playback, manual-selection protection and logged command failure. A separate Jellyfin 12.1.0 instance with synthetic media loaded the plugin and sent index 3 (English SDH) instead of index 2 (regular English) to an authenticated WebSocket test client. This proves the server/plugin command path, not every actual player. No production media or credentials were used in that sandbox.
 
 ## Provenance
 
@@ -48,7 +48,7 @@ The design was informed by [Hightmar/jellyfin-langage-failover](https://github.c
 
 ## Rollback
 
-Disable the plugin on its configuration page to stop new selections without restarting. To uninstall, use Jellyfin's plugin management and restart, or stop Jellyfin and remove only the `EnglishSdh_1.0.0.0` directory. Configuration is `Jellyfin.Plugin.EnglishSdh.xml`. No media or database restore is needed for normal removal; avoid restoring old databases unless separately necessary.
+Disable the plugin on its configuration page to stop new selections without restarting. To uninstall, use Jellyfin's plugin management and restart, or stop Jellyfin and remove only the `EnglishSdh_1.0.0.1` directory. Configuration is `Jellyfin.Plugin.EnglishSdh.xml`. No media or database restore is needed for normal removal; avoid restoring old databases unless separately necessary.
 
 ## Diagnostics
 

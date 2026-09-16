@@ -8,6 +8,14 @@
     "category": "General",
     "versions": [
       {
+        "version": "1.0.0.1",
+        "targetAbi": "12.1.0.0",
+        "changelog": "Recognize regional English subtitle tags; 18 new regression cases.",
+        "sourceUrl": "https://raw.githubusercontent.com/rebel6969/jellyfin-plugin-english-sdh/main/dist/english-sdh-1.0.0.1.zip",
+        "checksum": "191eb33bda39438759f82b1447a41290",
+        "timestamp": "2026-09-16T13:52:02.746689+00:00"
+      },
+      {
         "version": "1.0.0.0",
         "targetAbi": "12.1.0.0",
         "changelog": "Initial opt-in English SDH preference release.",

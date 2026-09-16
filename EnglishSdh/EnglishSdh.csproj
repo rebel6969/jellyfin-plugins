@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>Jellyfin.Plugin.EnglishSdh</AssemblyName>
+    <RootNamespace>Jellyfin.Plugin.EnglishSdh</RootNamespace>
+    <Version>1.0.0.0</Version>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Jellyfin.Controller" Version="12.1.0" PrivateAssets="all" />
+    <PackageReference Include="Jellyfin.Model" Version="12.1.0" PrivateAssets="all" />
+    <EmbeddedResource Include="config.html" />
+  </ItemGroup>
+</Project>

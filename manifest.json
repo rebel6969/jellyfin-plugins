@@ -1,0 +1,20 @@
+[
+  {
+    "guid": "36dab5c5-2396-4b09-9c63-a46c56288c68",
+    "name": "English SDH Preference",
+    "description": "Opt-in English SDH subtitle preference; audio untouched.",
+    "overview": "Opt-in English SDH subtitle preference; audio untouched.",
+    "owner": "rebel6969",
+    "category": "General",
+    "versions": [
+      {
+        "version": "1.0.0.0",
+        "targetAbi": "12.1.0.0",
+        "changelog": "Initial opt-in English SDH preference release.",
+        "sourceUrl": "https://raw.githubusercontent.com/rebel6969/jellyfin-plugin-english-sdh/main/dist/english-sdh-1.0.0.0.zip",
+        "checksum": "bcb1d43ac68aaed12065ef6df343547a",
+        "timestamp": "2026-09-16T13:16:32.431953+00:00"
+      }
+    ]
+  }
+]

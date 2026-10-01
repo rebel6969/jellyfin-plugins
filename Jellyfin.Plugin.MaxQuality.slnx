@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="Jellyfin.Plugin.MaxQuality/Jellyfin.Plugin.MaxQuality.csproj" />
+  <Project Path="Jellyfin.Plugin.MaxQuality.Tests/Jellyfin.Plugin.MaxQuality.Tests.csproj" />
+</Solution>

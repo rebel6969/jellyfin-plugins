@@ -59,8 +59,8 @@ Then install **Max Quality** from the catalog and restart Jellyfin.
 
 ### Manually
 
-Download `max-quality_1.0.0.0.zip` from the [releases](https://github.com/rebel6969/jellyfin-plugin-max-quality/releases),
-extract it into `<jellyfin data dir>/plugins/Max Quality_1.0.0.0/`, and restart Jellyfin.
+Download `max-quality_1.0.1.0.zip` from the [releases](https://github.com/rebel6969/jellyfin-plugin-max-quality/releases),
+extract it into `<jellyfin data dir>/plugins/Max Quality_1.0.1.0/`, and restart Jellyfin.
 
 ### Check that it is active
 
@@ -79,8 +79,8 @@ dotnet test Jellyfin.Plugin.MaxQuality.slnx -c Release
 ```
 
 Warnings are errors and every .NET, StyleCop and Serilog analyzer is enabled. The tests cover the round rules, the
-filter against Jellyfin's request shape, the service registration, and Jellyfin's own `StreamBuilder` deciding on a
-55.6 Mbps HEVC/TrueHD remux.
+filter against Jellyfin's request shape, the service registration, the plugin class as Jellyfin's loader creates it,
+and Jellyfin's own `StreamBuilder` deciding on a 55.6 Mbps HEVC/TrueHD remux.
 
 ## How it hooks in
 

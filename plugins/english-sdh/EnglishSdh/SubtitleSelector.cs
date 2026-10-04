@@ -1,0 +1,65 @@
+using System.Text.RegularExpressions;
+using MediaBrowser.Model.Entities;
+namespace Jellyfin.Plugin.EnglishSdh;
+
+/// <summary>Deterministic English/full-subtitle selection; no network or file mutation.</summary>
+public static class SubtitleSelector
+{
+    private static readonly Regex Separators = new("[^a-z0-9]+", RegexOptions.CultureInvariant,
+        TimeSpan.FromMilliseconds(100));
+    public static bool IsEnglish(string? language)
+    {
+        var tag = language?.Trim();
+        if (string.IsNullOrEmpty(tag)) return false;
+        if (tag.Equals("en", StringComparison.OrdinalIgnoreCase)
+            || tag.Equals("eng", StringComparison.OrdinalIgnoreCase)
+            || tag.Equals("english", StringComparison.OrdinalIgnoreCase)) return true;
+        // Match the primary language, not arbitrary strings starting with "en".
+        var separator = tag.IndexOf('-');
+        if (separator < 0) return false;
+        var primary = tag.AsSpan(0, separator);
+        if (!primary.Equals("en", StringComparison.OrdinalIgnoreCase)
+            && !primary.Equals("eng", StringComparison.OrdinalIgnoreCase)) return false;
+        var subtagLength = 0;
+        foreach (var character in tag.AsSpan(separator + 1))
+        {
+            if (character == '-')
+            {
+                if (subtagLength == 0) return false;
+                subtagLength = 0;
+            }
+            else if (!char.IsAsciiLetterOrDigit(character) || ++subtagLength > 8) return false;
+        }
+        return subtagLength > 0;
+    }
+    private static string[] Words(string? title) => Separators.Split((title ?? "").ToLowerInvariant());
+    private static bool Negated(string[] words, int i) => i > 0 && words[i - 1] is "non" or "not" or "no" or "without";
+    private static bool HasLabel(string? title, bool hearing)
+    {
+        var words = Words(title);
+        for (var i = 0; i < words.Length; i++)
+        {
+            if (Negated(words, i)) continue;
+            if (!hearing && words[i] == "forced") return true;
+            if (!hearing) continue;
+            if (words[i] is "sdh" or "cc" or "hi") return true;
+            if (i + 1 < words.Length && ((words[i] == "hearing" && words[i + 1] == "impaired")
+                || (words[i] == "closed" && words[i + 1] is "caption" or "captions"))) return true;
+        }
+        return false;
+    }
+    public static bool IsForced(MediaStream stream) => stream.IsForced
+        || HasLabel(stream.Title, false) || HasLabel(stream.DisplayTitle, false);
+    public static bool IsSdh(MediaStream stream) => stream.IsHearingImpaired
+        || HasLabel(stream.Title, true) || HasLabel(stream.DisplayTitle, true);
+
+    // No English/full track: leave the client's selection untouched, never disable it.
+    public static int? Select(IReadOnlyList<MediaStream> streams) => streams
+        .Where(s => s.Type == MediaStreamType.Subtitle && s.Index >= 0 && IsEnglish(s.Language)
+            && !IsForced(s) && !Words(s.Title).Contains("commentary"))
+        .OrderByDescending(IsSdh)
+        .ThenByDescending(s => s.IsHearingImpaired)
+        .ThenByDescending(s => s.IsDefault)
+        .ThenBy(s => s.Index)
+        .Select(s => (int?)s.Index).FirstOrDefault();
+}

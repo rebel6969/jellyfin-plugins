@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en"><head><title>English SDH Preference</title></head><body>
+<div id="englishSdhConfig" data-role="page" class="page type-interior pluginConfigurationPage">
+  <div class="content-primary" style="max-width:48em">
+    <h2>English SDH Preference</h2>
+    <p>English SDH first. Regular English as a fallback. Audio stays untouched.</p>
+    <p>The client must support subtitle switching. The selection is sent once, about 1.5 seconds after playback starts; later manual choices are left alone.</p>
+    <form id="sdhForm">
+      <label class="emby-checkbox-label"><input id="sdhEnabled" type="checkbox" /> Enable automatic selection</label>
+      <fieldset style="margin:1.5em 0;padding:1em"><legend>Apply only to these users</legend><div id="sdhUsers"></div></fieldset>
+      <button id="sdhSave" type="submit" class="emby-button raised button-submit" disabled>Save</button>
+      <p id="sdhStatus" role="status" aria-live="polite"></p>
+    </form>
+  </div>
+  <script>
+  (() => {
+    const page = document.getElementById('englishSdhConfig');
+    const pluginId = '36dab5c5-2396-4b09-9c63-a46c56288c68';
+    const status = page.querySelector('#sdhStatus');
+    const save = page.querySelector('#sdhSave');
+    let configuration = null;
+    let loading = false;
+    const normalize = id => String(id).replaceAll('-', '').toLowerCase();
+    async function load() {
+      if (loading) return;
+      loading = true;
+      save.disabled = true;
+      try {
+        const [config, users] = await Promise.all([
+          ApiClient.getPluginConfiguration(pluginId), ApiClient.getUsers()
+        ]);
+        configuration = config;
+        page.querySelector('#sdhEnabled').checked = config.Enabled;
+        const selected = new Set((config.UserIds || []).map(normalize));
+        const container = page.querySelector('#sdhUsers');
+        container.replaceChildren();
+        for (const user of users) {
+          const label = document.createElement('label');
+          label.style.display = 'block'; label.style.padding = '.5em 0';
+          const input = document.createElement('input');
+          input.type = 'checkbox'; input.value = user.Id;
+          input.checked = selected.has(normalize(user.Id));
+          label.append(input, document.createTextNode(' ' + user.Name));
+          container.append(label);
+        }
+        status.textContent = '';
+        save.disabled = false;
+      } catch (error) {
+        configuration = null;
+        status.textContent = 'Could not load settings. Reload this page before saving.';
+        console.error('English SDH settings load failed', error);
+      } finally { loading = false; }
+    }
+    page.querySelector('#sdhForm').addEventListener('submit', async event => {
+      event.preventDefault();
+      if (!configuration || save.disabled) return;
+      save.disabled = true;
+      try {
+        const next = { ...configuration,
+          Enabled: page.querySelector('#sdhEnabled').checked,
+          UserIds: Array.from(page.querySelectorAll('#sdhUsers input:checked'), input => input.value)
+        };
+        await ApiClient.updatePluginConfiguration(pluginId, next);
+        configuration = next;
+        status.textContent = 'Saved. Applies to the next playback; no restart needed.';
+      } catch (error) {
+        status.textContent = 'Save failed. Your new settings were not confirmed.';
+        console.error('English SDH settings save failed', error);
+      } finally { save.disabled = false; }
+    });
+    page.addEventListener('pageshow', load);
+    page.addEventListener('viewshow', load);
+    load();
+  })();
+  </script>
+</div></body></html>

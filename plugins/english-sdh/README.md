@@ -4,13 +4,13 @@ Standalone, opt-in subtitle preference plugin. Selects non-forced English SDH/HI
 
 ## Install
 
-Use the package and manifest in this directory's `dist/` and `manifest.json`. In Jellyfin, add this repository URL:
+In Jellyfin, add this repository URL:
 
-`https://raw.githubusercontent.com/rebel6969/jellyfin-plugin-english-sdh/main/manifest.json`
+`https://raw.githubusercontent.com/rebel6969/jellyfin-plugins/main/manifest.json`
 
 Install **English SDH Preference**, restart Jellyfin, then open the plugin configuration page. Enable it and select users. It is disabled with no users selected by default. Existing Language Failover or other automatic subtitle-switching plugins should not also be enabled for the same users.
 
-Manual install: stop Jellyfin; extract the release ZIP into a new `EnglishSdh_1.0.0.1` directory under the server's plugins directory; restart. Do not overwrite another plugin. Keep a stopped-server backup first.
+Manual install: stop Jellyfin; extract the release ZIP ([releases](https://github.com/rebel6969/jellyfin-plugins/releases/tag/english-sdh-v1.0.0.1)) into a new `EnglishSdh_1.0.0.1` directory under the server's plugins directory; restart. Do not overwrite another plugin. Keep a stopped-server backup first.
 
 ## Behavior
 

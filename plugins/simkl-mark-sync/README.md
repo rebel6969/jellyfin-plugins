@@ -61,7 +61,7 @@ season or series, never reaches Simkl. The Trakt plugin sends these marks; this 
 In Dashboard › Plugins › Repositories, add:
 
 ```
-https://raw.githubusercontent.com/rebel6969/jellyfin-plugin-simkl-mark-sync/main/manifest.json
+https://raw.githubusercontent.com/rebel6969/jellyfin-plugins/main/manifest.json
 ```
 
 Then install **Simkl Mark Sync** from the catalog and restart Jellyfin.
@@ -69,7 +69,7 @@ Then install **Simkl Mark Sync** from the catalog and restart Jellyfin.
 ### Manually
 
 1. Download `simkl-mark-sync_1.0.0.0.zip` from the
-   [releases](https://github.com/rebel6969/jellyfin-plugin-simkl-mark-sync/releases).
+   [releases](https://github.com/rebel6969/jellyfin-plugins/releases/tag/simkl-mark-sync-v1.0.0.0).
 2. Extract it into `<jellyfin data dir>/plugins/Simkl Mark Sync_1.0.0.0/`.
 3. Restart Jellyfin.
 

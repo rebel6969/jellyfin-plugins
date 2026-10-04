@@ -52,14 +52,14 @@ starts a new round and gets its cap removed, as intended.
 Dashboard › Plugins › Repositories › add:
 
 ```
-https://raw.githubusercontent.com/rebel6969/jellyfin-plugin-max-quality/main/manifest.json
+https://raw.githubusercontent.com/rebel6969/jellyfin-plugins/main/manifest.json
 ```
 
 Then install **Max Quality** from the catalog and restart Jellyfin.
 
 ### Manually
 
-Download `max-quality_1.0.1.0.zip` from the [releases](https://github.com/rebel6969/jellyfin-plugin-max-quality/releases),
+Download `max-quality_1.0.1.0.zip` from the [releases](https://github.com/rebel6969/jellyfin-plugins/releases/tag/max-quality-v1.0.1.0),
 extract it into `<jellyfin data dir>/plugins/Max Quality_1.0.1.0/`, and restart Jellyfin.
 
 ### Check that it is active

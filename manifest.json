@@ -1,0 +1,64 @@
+[
+  {
+    "guid": "36dab5c5-2396-4b09-9c63-a46c56288c68",
+    "name": "English SDH Preference",
+    "description": "Opt-in English SDH subtitle preference; audio untouched.",
+    "overview": "Opt-in English SDH subtitle preference; audio untouched.",
+    "owner": "rebel6969",
+    "category": "General",
+    "versions": [
+      {
+        "version": "1.0.0.1",
+        "targetAbi": "12.1.0.0",
+        "changelog": "Recognize regional English subtitle tags; 18 new regression cases.",
+        "sourceUrl": "https://github.com/rebel6969/jellyfin-plugins/releases/download/english-sdh-v1.0.0.1/english-sdh-1.0.0.1.zip",
+        "checksum": "191eb33bda39438759f82b1447a41290",
+        "timestamp": "2026-09-16T13:52:02.746689+00:00"
+      },
+      {
+        "version": "1.0.0.0",
+        "targetAbi": "12.1.0.0",
+        "changelog": "Initial opt-in English SDH preference release.",
+        "sourceUrl": "https://github.com/rebel6969/jellyfin-plugins/releases/download/english-sdh-v1.0.0.0/english-sdh-1.0.0.0.zip",
+        "checksum": "bcb1d43ac68aaed12065ef6df343547a",
+        "timestamp": "2026-09-16T13:16:32.431953+00:00"
+      }
+    ]
+  },
+  {
+    "guid": "b1ac5cc4-9822-4979-81c6-1c4b7dc6dbad",
+    "name": "Max Quality",
+    "description": "Plays every video at its original quality: a client's bitrate limit no longer forces a transcode. A quality you pick during playback is respected for the rest of that video.",
+    "overview": "Direct play at original quality; your mid-playback quality choice is respected",
+    "owner": "rebel6969",
+    "category": "General",
+    "versions": [
+      {
+        "version": "1.0.1.0",
+        "changelog": "Fix: 1.0.0.0 failed to load on Jellyfin 12.1 (NullReferenceException in PluginManager.CreatePluginInstance) because the plugin class derived from the non-generic BasePlugin, whose Version is never set. It now derives from BasePlugin<PluginConfiguration>.",
+        "targetAbi": "12.1.0.0",
+        "sourceUrl": "https://github.com/rebel6969/jellyfin-plugins/releases/download/max-quality-v1.0.1.0/max-quality_1.0.1.0.zip",
+        "checksum": "e5e52f558059f56f18ed3fc17e7b2c4d",
+        "timestamp": "2026-10-01T03:30:04.0000000Z"
+      }
+    ]
+  },
+  {
+    "guid": "8388cbab-8a47-488b-a56a-2fc135bc27a0",
+    "name": "Simkl Mark Sync",
+    "description": "Sends the movies and episodes you mark played or unplayed in Jellyfin to Simkl. Uses the Simkl login saved by the official Simkl plugin, which only sends what you play. A removal always names its episodes, so Simkl never deletes a whole show.",
+    "overview": "Send manual played / unplayed marks to Simkl",
+    "owner": "rebel6969",
+    "category": "General",
+    "versions": [
+      {
+        "version": "1.0.0.0",
+        "changelog": "First release: manual played and unplayed marks of movies and episodes are sent to Simkl in batches, using the official Simkl plugin's login.",
+        "targetAbi": "12.1.0.0",
+        "sourceUrl": "https://github.com/rebel6969/jellyfin-plugins/releases/download/simkl-mark-sync-v1.0.0.0/simkl-mark-sync_1.0.0.0.zip",
+        "checksum": "de325309b27a2eec83a2f2b896b69134",
+        "timestamp": "2026-10-04T04:58:27.0000000Z"
+      }
+    ]
+  }
+]

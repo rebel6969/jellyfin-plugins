@@ -1,0 +1,20 @@
+[
+  {
+    "guid": "b1ac5cc4-9822-4979-81c6-1c4b7dc6dbad",
+    "name": "Max Quality",
+    "description": "Plays every video at its original quality: a client's bitrate limit no longer forces a transcode. A quality you pick during playback is respected for the rest of that video.",
+    "overview": "Direct play at original quality; your mid-playback quality choice is respected",
+    "owner": "rebel6969",
+    "category": "General",
+    "versions": [
+      {
+        "version": "1.0.1.0",
+        "changelog": "Fix: 1.0.0.0 failed to load on Jellyfin 12.1 (NullReferenceException in PluginManager.CreatePluginInstance) because the plugin class derived from the non-generic BasePlugin, whose Version is never set. It now derives from BasePlugin<PluginConfiguration>.",
+        "targetAbi": "12.1.0.0",
+        "sourceUrl": "https://github.com/rebel6969/jellyfin-plugin-max-quality/releases/download/v1.0.1.0/max-quality_1.0.1.0.zip",
+        "checksum": "e5e52f558059f56f18ed3fc17e7b2c4d",
+        "timestamp": "2026-10-01T03:30:04.0000000Z"
+      }
+    ]
+  }
+]

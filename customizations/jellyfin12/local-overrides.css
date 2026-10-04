@@ -1,0 +1,11 @@
+/* Optional overrides; load AFTER fix_v17.css. Do not also paste duplicates. */
+/* Narrow desktop fallback: v17 only covers >=50em. Keep native mobile unchanged. */
+@media (max-width:49.999em){.layout-desktop #itemDetailPage .detailRibbon{padding-left:0!important}.layout-desktop #itemDetailPage .infoWrapper{margin-left:0!important;margin-top:0!important}.layout-desktop #itemDetailPage .nameContainer,.layout-desktop #itemDetailPage .itemMiscInfo{position:static!important;margin:0 0 1em!important;max-width:100%!important;white-space:normal!important;flex-wrap:wrap!important}.layout-desktop #itemDetailPage .detailImageContainer{display:none!important}.layout-desktop #itemDetailPage .detailPagePrimaryContent{padding:1em!important;min-height:0!important}.layout-desktop #itemDetailPage .detailPageSecondaryContainer{clear:both!important}}@media(max-width:49.999em){.layout-desktop #itemDetailPage .detailRibbon{display:flex!important;flex-direction:column!important;align-items:stretch!important;padding:1em!important}.layout-desktop #itemDetailPage .infoWrapper{width:100%!important;flex:none!important}.layout-desktop #itemDetailPage .mainDetailButtons{position:static!important;width:100%!important;flex-wrap:wrap!important;justify-content:flex-start!important;margin:0!important}.layout-desktop #itemDetailPage .itemMiscInfo{width:100%!important;display:flex!important}}@media(max-width:49.999em){.layout-desktop #itemDetailPage .detailRibbon{height:auto!important;min-height:0!important}.layout-desktop #itemDetailPage .detailPagePrimaryContent{padding-top:2em!important}}
+
+
+/* Place the native Jellyfin 12 user menu before the server brand. */
+.MuiToolbar-root > div:has(> button[aria-controls="app-user-menu"]) {
+  order: -1;
+  margin-inline-end: 8px;
+  flex-shrink: 0;
+}

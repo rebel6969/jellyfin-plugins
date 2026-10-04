@@ -1,0 +1,84 @@
+--- a/slideshowpure.js
++++ b/slideshowpure.js
+@@ -412,7 +412,8 @@
+       window.ApiClient._currentUser &&
+       window.ApiClient._currentUser.Id &&
+       window.ApiClient._serverInfo &&
+-      window.ApiClient._serverInfo.AccessToken
++      window.ApiClient._serverInfo.AccessToken &&
++      document.getElementById("homeTab")
+     ) {
+       console.log(
+         "🔓 User is fully logged in. Starting slideshow initialization...",
+@@ -525,10 +526,16 @@
+    * @returns {HTMLElement} Slides container element
+    */
+   getOrCreateSlidesContainer() {
+-    let container = document.getElementById("slides-container");
++    let container = document.getElementById("slides-container") || this.slidesContainer;
+     if (!container) {
+       container = this.createElement("div", { id: "slides-container" });
+-      document.body.appendChild(container);
++    }
++    // React unmounts homeTab on navigation. Retain one container (and its
++    // controls/observers), then attach it to the new homeTab on return.
++    this.slidesContainer = container;
++    const homeTab = document.getElementById("homeTab");
++    if (homeTab && container.parentElement !== homeTab) {
++      homeTab.prepend(container);
+     }
+     return container;
+   },
+@@ -1107,14 +1114,15 @@
+ 
+   updateVisibility() {
+     const activeTab = document.querySelector(".emby-tab-button-active");
+-    const container = document.getElementById("slides-container");
++    const container = SlideUtils.getOrCreateSlidesContainer();
+ 
+     if (!container) return;
+ 
+     const isVisible =
+       (window.location.hash === "#/home.html" ||
+         window.location.hash === "#/home") &&
+-      (activeTab ? activeTab.getAttribute("data-index") === "0" : false);
++      !!document.getElementById("homeTab") &&
++      (activeTab ? activeTab.getAttribute("data-index") === "0" : true);
+ 
+     container.style.display = isVisible ? "block" : "none";
+ 
+--- a/slideshowpure.css
++++ b/slideshowpure.css
+@@ -265,6 +265,22 @@
+   height: 90%;
+   overflow: hidden;
+   margin: 0 auto;
++}
++
++/* Jellyfin 12: reserve real homepage space rather than offsetting the rows
++   while the body-level hero sits below the React root. */
++#homeTab > #slides-container {
++  width: 100%;
++  height: 65vh;
++  margin: 0;
++}
++
++#homeTab:has(> #slides-container) > .homeSectionsContainer {
++  top: 0;
++}
++
++#homeTab > #slides-container .logo-container {
++  top: 5vh;
+ }
+ 
+ .arrow {
+--- a/src/Jellyfin.Plugin.MediaBar/Inject/index.html
++++ b/src/Jellyfin.Plugin.MediaBar/Inject/index.html
+@@ -1,5 +1,5 @@
+-<link rel="stylesheet" href="{{AssetBaseUrl}}/slideshowpure.css" />
+-<script defer src="{{AssetBaseUrl}}/slideshowpure.js"></script>
++<link rel="stylesheet" href="{{AssetBaseUrl}}/slideshowpure.css?v=solowatch-jf12-layout2" />
++<script defer src="{{AssetBaseUrl}}/slideshowpure.js?v=solowatch-jf12-layout2"></script>
+ <script defer>
+     if (typeof MediaBarConfigHandler == 'undefined') {
+         const MediaBarConfigHandler = {

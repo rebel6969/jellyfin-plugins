@@ -1,0 +1,84 @@
+/* SoloWatch Jellyfish FIX v17
+ *
+ * Target: Jellyfin 10.11.x, desktop item-detail page.
+ * Load order: MUST be imported after n00bcodr/jellyfish theme.css, indicators.css,
+ *             progress_bar.css and jellyflix.css in Dashboard > General > Custom CSS.
+ *
+ * Fixes four element-placement defects caused by the jellyfish theme's desktop
+ * detail layout being written against an older core markup/CSS baseline:
+ *
+ *   1. Title + misc-info row rendered ~630px right of the description column.
+ *   2. Poster overlapping the left edge of the description column.
+ *   3. Poster overhanging into the Cast & Crew section.
+ *   4. Title + misc-info row colliding with the first content section
+ *      ("Seasons" heading and season cards on series pages).
+ *
+ * Supersedes fix_v15.css. The previous fix_v9.css import 404'd, so none of the
+ * earlier fixes were ever applied.
+ */
+
+@media (min-width: 50em) {
+
+  /* ---------------------------------------------------------------------
+   * 1) TITLE / MISC-INFO ROW HORIZONTAL ALIGNMENT
+   *
+   * Core 10.11 keeps `padding-left: 32.45vw` on .detailRibbon, and the theme
+   * adds `margin-left: 20.8vw` to .infoWrapper on top of it. The two stack, so
+   * the title block lands at ~53vw while the description column sits at 20.4vw.
+   *
+   * Zero the core ribbon padding and drive the offset from .infoWrapper alone.
+   * .mainDetailButtons is right-aligned inside the ribbon's content box, so it
+   * does not move.
+   * ------------------------------------------------------------------- */
+  .layout-desktop .detailRibbon {
+    padding-left: 0 !important;
+  }
+
+  .layout-desktop .infoWrapper {
+    margin-left: 22.5vw !important;
+  }
+
+  /* ---------------------------------------------------------------------
+   * 2) POSTER OVERLAPPING THE DESCRIPTION COLUMN
+   *
+   * The theme sizes the poster at 18.3vw starting at ~6.5vw, so its right edge
+   * reaches ~24.7vw, while it indents the text only 20.4vw. Match the text
+   * column to the info row above it and clear the poster.
+   * ------------------------------------------------------------------- */
+  .layout-desktop .detailPagePrimaryContent {
+    padding-left: 22.5vw !important;
+  }
+
+  /* ---------------------------------------------------------------------
+   * 3) POSTER OVERHANGING THE CAST & CREW SECTION
+   *
+   * The poster is a left float displaced downward by `top: 9em`, so it extends
+   * 9em + 27.45vw (18.3vw at 2:3) below the top of the primary container. The
+   * theme reserves only 29vw, leaving the poster hanging into the section below.
+   * ------------------------------------------------------------------- */
+  .layout-desktop .detailPageWrapperContainer .detailPagePrimaryContent,
+  .layout-desktop .detailPageWrapperContainer:has(.detailImageContainer .portraitCard) .detailPagePrimaryContent {
+    min-height: calc(27.45vw + 11em) !important;
+  }
+
+  /* ---------------------------------------------------------------------
+   * 4) TITLE / MISC-INFO ROW COLLIDING WITH THE FIRST CONTENT SECTION
+   *
+   * The theme positions .nameContainer and .itemMiscInfo absolutely, which
+   * collapses .infoWrapper to 0px height, so nothing reserves vertical room for
+   * them. On series pages the "Seasons" heading and its cards render underneath
+   * the title. Reserve the band the title block actually occupies.
+   * ------------------------------------------------------------------- */
+  .layout-desktop .detailPagePrimaryContent {
+    padding-top: 8.5em !important;
+  }
+
+  /* ---------------------------------------------------------------------
+   * 5) Keep the sections below the fold clear of the floated poster.
+   * ------------------------------------------------------------------- */
+  .layout-desktop .detailPageSecondaryContainer {
+    clear: both !important;
+    position: relative !important;
+    z-index: 1 !important;
+  }
+}

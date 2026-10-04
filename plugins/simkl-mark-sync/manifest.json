@@ -1,0 +1,20 @@
+[
+  {
+    "guid": "8388cbab-8a47-488b-a56a-2fc135bc27a0",
+    "name": "Simkl Mark Sync",
+    "description": "Sends the movies and episodes you mark played or unplayed in Jellyfin to Simkl. Uses the Simkl login saved by the official Simkl plugin, which only sends what you play. A removal always names its episodes, so Simkl never deletes a whole show.",
+    "overview": "Send manual played / unplayed marks to Simkl",
+    "owner": "rebel6969",
+    "category": "General",
+    "versions": [
+      {
+        "version": "1.0.0.0",
+        "changelog": "First release: manual played and unplayed marks of movies and episodes are sent to Simkl in batches, using the official Simkl plugin's login.",
+        "targetAbi": "12.1.0.0",
+        "sourceUrl": "https://github.com/rebel6969/jellyfin-plugin-simkl-mark-sync/releases/download/v1.0.0.0/simkl-mark-sync_1.0.0.0.zip",
+        "checksum": "de325309b27a2eec83a2f2b896b69134",
+        "timestamp": "2026-10-04T04:58:27.0000000Z"
+      }
+    ]
+  }
+]

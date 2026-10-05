@@ -21,6 +21,8 @@ Each run, for every Jellyfin user linked in the Trakt plugin with **Scrobble** o
    season and number, then the same title. Anything that is not exactly one episode is left alone and reported once.
 3. Skips the episode if Trakt already has **any** play of it. Jellyfin marks an episode played only when it is
    played to the end or marked by hand, so an episode Trakt has never seen is a missed play.
+   Confirmations are cached per Trakt account: when the plugin is linked to another account, the cache for that
+   Jellyfin user is dropped and every recent play is checked against the new account.
 4. Adds one play, dated by Jellyfin's "finished playing" activity entry (else the last-played time), but only after
    the gap has been seen on two runs at least 10 minutes apart, so it never races the plugin's own scrobble.
 
@@ -65,5 +67,5 @@ As a Reincarnated Aristocrat, I'll Use My Appraisal Skill to Rise in the World S
 python3 -W error -m unittest test_trakt_gap_filler
 ```
 
-25 tests against fake Jellyfin and Trakt APIs built from the real case above; each safety rule was also broken on
-purpose and caught by its test (21 of 21).
+28 tests against fake Jellyfin and Trakt APIs built from the real case above; each safety rule was also broken on
+purpose and caught by its test (23 of 23).

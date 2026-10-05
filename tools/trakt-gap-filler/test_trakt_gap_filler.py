@@ -100,6 +100,7 @@ class FakeTrakt:
         self.reply: Any = {"added": {"movies": 0, "episodes": 1}, "not_found": {"episodes": []}}
         self.posts: list[Any] = []
         self.calls: list[tuple[str, str]] = []
+        self.slug = "vic-new"
 
     def call(self, method: str, path: str, query: dict[str, str] | None = None, body: Any = None) -> Any:
         self.calls.append((method, path))
@@ -107,6 +108,8 @@ class FakeTrakt:
             self.posts.append(copy.deepcopy(body))
             return copy.deepcopy(self.reply)
         assert method == "GET"
+        if path == "/users/settings":
+            return {"user": {"ids": {"slug": self.slug}}}
         if path.startswith("/search/"):
             _, _, source, ident = path.split("/")
             assert query is not None
@@ -119,7 +122,7 @@ class FakeTrakt:
         raise AssertionError(f"unexpected Trakt call {path}")
 
 
-class FillTests(unittest.TestCase):
+class FillBase(unittest.TestCase):
     def setUp(self) -> None:
         patcher = mock.patch("urllib.request.urlopen", side_effect=AssertionError("tests must not reach the network"))
         patcher.start()
@@ -154,6 +157,8 @@ class FillTests(unittest.TestCase):
         self.log = err.getvalue()
         return tally
 
+
+class FillTests(FillBase):
     def test_regression_missed_episode_is_added_once_after_settling_with_the_stop_time(self) -> None:
         first = self.run_fill()
         self.assertEqual((first["pending"], first["added"], self.trakt.posts), (1, 0, []))
@@ -275,7 +280,9 @@ class FillTests(unittest.TestCase):
     def test_an_excluded_location_is_skipped(self) -> None:
         self.user = MOD.TraktUser(USER, "token", ["/media/anime/Reincarnated Aristocrat"])
         tally = self.run_fill()
-        self.assertEqual((tally["excluded"], self.trakt.calls), (1, []))
+        self.assertEqual(
+            (tally["excluded"], self.trakt.calls), (1, [("GET", "/users/settings")])
+        )  # only the account check
         self.user = MOD.TraktUser(USER, "token", ["/media/anime/Reincarnated"])
         self.assertEqual(self.run_fill()["excluded"], 0)
 
@@ -322,6 +329,40 @@ class FillTests(unittest.TestCase):
         self.assertNotIn("old", self.state["pending"])
         self.assertIn("new", self.state["pending"])
         self.assertEqual(self.state["alerted"], {})
+
+
+class AccountBindingTests(FillBase):
+    KEY = f"{USER}:{ITEM['Id']}:2026-10-05T05:29:52.000Z"
+    OTHER = "00000000000000000000000000000002:abc:2026-10-05T05:00:00.000Z"
+
+    def test_a_new_trakt_account_drops_this_users_cache_and_rechecks_live(self) -> None:
+        self.trakt.history[14531280] = [{"id": 1}]
+        self.state = {
+            "accounts": {USER: "old-account"},
+            "done": {self.KEY: self.now, self.OTHER: self.now},
+            "pending": {},
+            "alerted": {},
+        }
+        tally = self.run_fill()
+        self.assertEqual(tally["on_trakt"], 1)
+        self.assertIn(("GET", "/sync/history/episodes/14531280"), self.trakt.calls)  # checked live, not from the cache
+        self.assertEqual(self.state["accounts"][USER], "vic-new")
+        self.assertIn(self.OTHER, self.state["done"])  # another Jellyfin user's results are untouched
+        self.assertIn("1 cached results dropped", self.log)
+
+    def test_the_same_account_keeps_the_cache(self) -> None:
+        self.state = {"accounts": {USER: "vic-new"}, "done": {self.KEY: self.now}, "pending": {}, "alerted": {}}
+        tally = self.run_fill()
+        self.assertEqual(tally["on_trakt"], 1)
+        self.assertNotIn(("GET", "/sync/history/episodes/14531280"), self.trakt.calls)
+        self.assertNotIn("cached results dropped", self.log)
+
+    def test_results_cached_before_accounts_were_recorded_are_rechecked(self) -> None:
+        self.trakt.history[14531280] = [{"id": 1}]
+        self.state = {"done": {self.KEY: self.now}, "pending": {}, "alerted": {}}
+        self.run_fill()
+        self.assertIn(("GET", "/sync/history/episodes/14531280"), self.trakt.calls)
+        self.assertEqual(self.state["accounts"], {USER: "vic-new"})
 
 
 class HelperTests(unittest.TestCase):
@@ -400,7 +441,9 @@ class MainTests(unittest.TestCase):
             return mock.Mock(
                 call=mock.Mock(
                     side_effect=lambda method, path, query=None, body=None: (
-                        {} if path == "/users/settings" else self.trakt.call(method, path, query, body)
+                        {"user": {"ids": {"slug": "vic-new"}}}
+                        if path == "/users/settings"
+                        else self.trakt.call(method, path, query, body)
                     )
                 )
             )
@@ -440,6 +483,7 @@ class MainTests(unittest.TestCase):
         self.trakt.reply = {"added": {"episodes": 0}}
         state = {
             "pending": {f"{USER}:{ITEM['Id']}:2026-10-05T05:29:52.000Z": at("2026-10-05T05:45:00+00:00")},
+            "accounts": {USER: "vic-new"},
             "client_id": "d" * 64,
         }
         self.state_dir.mkdir()

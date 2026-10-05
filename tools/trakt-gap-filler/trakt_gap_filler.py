@@ -13,7 +13,8 @@ Each run, for every Jellyfin user linked in the Trakt plugin with scrobbling or 
 - finds the episode on Trakt: by the episode's own ids (the owning show must match), otherwise in the
   show's Trakt episode list by air date (within a day), preferring the same season and number, then the
   same title. Anything that does not resolve to exactly one episode is left alone and reported once;
-- skips it if Trakt already holds any play of that episode. Jellyfin marks an episode played only when
+- skips it if Trakt already holds any play of that episode (cached confirmations are kept per Trakt account and
+  dropped when the plugin is linked to a different one). Jellyfin marks an episode played only when
   it is played to the end or marked by hand, so an episode Trakt has never seen is a missed play; a
   replay of an episode Trakt already has is not filled;
 - adds one play, dated by Jellyfin's playback-stopped activity entry (else the last-played time), once
@@ -305,6 +306,27 @@ def label(item: dict[str, Any]) -> str:
     return f"{item.get('SeriesName')} S{item.get('ParentIndexNumber') or 0:02d}E{item.get('IndexNumber') or 0:02d} '{item.get('Name')}'"
 
 
+def bind_account(state: dict[str, Any], user: TraktUser, account: str) -> int:
+    """Cached results hold only for the Trakt account that produced them. When the plugin is linked to another
+    account (or the account was never recorded, as before 2026-10-05), drop this user's cached results so every
+    play is checked against the account in use. Returns how many were dropped."""
+    accounts = state.setdefault("accounts", {})
+    if accounts.get(user.jellyfin_id) == account:
+        return 0
+    prefix = f"{user.jellyfin_id}:"
+    dropped = 0
+    for bucket in ("pending", "done", "alerted"):
+        keep = {k: v for k, v in state.get(bucket, {}).items() if not k.startswith(prefix)}
+        dropped += len(state.get(bucket, {})) - len(keep)
+        state[bucket] = keep
+    log(
+        "INFO",
+        f"Jellyfin user {user.jellyfin_id} is linked to Trakt account {account} (was {accounts.get(user.jellyfin_id)}): {dropped} cached results dropped",
+    )
+    accounts[user.jellyfin_id] = account
+    return dropped
+
+
 def fill(
     jellyfin: Api,
     users: list[tuple[TraktUser, Api]],
@@ -327,6 +349,7 @@ def fill(
     stops = stop_times(jellyfin, cutoff)
     series_ids: dict[str, dict[str, str]] = {}
     for user, trakt in users:
+        bind_account(state, user, str(trakt.call("GET", "/users/settings")["user"]["ids"]["slug"]))
         resolver = Resolver(trakt)
         for item, played in recent_played(jellyfin, user.jellyfin_id, cutoff):
             tally["played"] += 1

@@ -1,0 +1,22 @@
+[Unit]
+Description=Add episode plays the Jellyfin Trakt plugin failed to send to Trakt
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# JELLYFIN_API_TOKEN=... (Dashboard > API Keys); optionally JELLYFIN_URL, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID.
+EnvironmentFile=/etc/trakt-gap-filler.env
+# The folder holding configurations/Trakt.xml: /var/lib/jellyfin/plugins on a package install,
+# <config volume>/data/plugins for the Docker image.
+Environment=JELLYFIN_PLUGINS_DIR=/var/lib/jellyfin/plugins
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/local/bin/trakt_gap_filler.py --apply
+StateDirectory=trakt-gap-filler
+StateDirectoryMode=0700
+TimeoutStartSec=10min
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true

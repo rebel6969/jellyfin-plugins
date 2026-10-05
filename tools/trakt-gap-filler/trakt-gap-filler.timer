@@ -1,0 +1,11 @@
+[Unit]
+Description=Add missed Jellyfin episode plays to Trakt every 15 minutes
+
+[Timer]
+OnBootSec=9min
+OnUnitActiveSec=15min
+AccuracySec=30s
+Unit=trakt-gap-filler.service
+
+[Install]
+WantedBy=timers.target

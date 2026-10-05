@@ -28,6 +28,14 @@ Each folder has its own README (behaviour, settings, how to check it is active),
 [`customizations`](customizations) holds the CSS and the Media Bar patch I use with the Jellyfish theme on
 Jellyfin 12, with notes on provenance and how they were tested. They are not plugins and are not in the manifest.
 
+## Tools
+
+| Tool | What it does | Folder | License |
+|---|---|---|---|
+| **Trakt Gap Filler** | Adds the episode plays the official Trakt plugin fails to send, such as new anime episodes numbered differently on TVDB and Trakt | [`tools/trakt-gap-filler`](tools/trakt-gap-filler) | GPL-3.0 |
+
+Tools run beside Jellyfin (here, a systemd timer), so they are not in the manifest.
+
 ## History
 
 This repository combines four earlier repositories (`jellyfin-plugin-max-quality`, `jellyfin-plugin-simkl-mark-sync`,

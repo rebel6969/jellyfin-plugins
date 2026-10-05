@@ -49,6 +49,15 @@ def trakt_episode(number: int, title: str, aired: str, trakt_id: int, season: in
     return {"season": season, "number": number, "title": title, "first_aired": aired, "ids": {"trakt": trakt_id}}
 
 
+def history_row(season: int, number: int, watched: str, trakt_id: int, action: str = "scrobble") -> dict[str, Any]:
+    return {
+        "watched_at": watched,
+        "action": action,
+        "type": "episode",
+        "episode": {"season": season, "number": number, "ids": {"trakt": trakt_id}},
+    }
+
+
 # Trakt's TMDB-ordered season 1 around the new episodes, as read on 2026-10-05.
 SEASONS: list[dict[str, Any]] = [
     {
@@ -63,8 +72,44 @@ SEASONS: list[dict[str, Any]] = [
 ]
 
 
+# The second case of 2026-10-05: Overgeared S01E02. The plugin scrobbled it by show plus S01E02, but Trakt's copy
+# held none of Jellyfin's ids and was dated 2026-10-09 against TVDB's 2026-10-04.
+OG_SERIES_ID = "3ac2e3af8c4e22b9c077e7457ebf5957"
+OG_SERIES_IDS = {"AniDB": "20077", "Imdb": "tt43691353", "Tmdb": "324502", "Tvdb": "478752"}
+OG_SHOW = 319961
+OG_ITEM: dict[str, Any] = {
+    "Id": "81562ef833ffd2bebc23c2648b9c1d5b",
+    "Name": "Episode 2",
+    "SeriesName": "Overgeared",
+    "SeriesId": OG_SERIES_ID,
+    "ParentIndexNumber": 1,
+    "IndexNumber": 2,
+    "PremiereDate": "2026-10-04T00:00:00.0000000Z",
+    "ProviderIds": {"AniDB": "317009", "Imdb": "tt47663851", "Tvdb": "12004882"},
+    "Path": "/media/anime/Overgeared/Season 1/Overgeared - S01E02 - A Blacksmith's First Step WEBDL-1080p.mkv",
+    "UserData": {"Played": True, "LastPlayedDate": "2026-10-05T09:16:45.6989066Z"},
+}
+OG_STOP = "2026-10-05T09:27:09.4264107Z"
+OG_SEASONS: list[dict[str, Any]] = [
+    {
+        "number": 1,
+        "episodes": [
+            trakt_episode(1, "Legendary Class", "2026-10-02T14:30:00.000Z", 14224604),
+            trakt_episode(2, "The Power of Items", "2026-10-09T14:30:00.000Z", 14531117),
+            trakt_episode(3, "Episode 3", "2026-10-16T14:30:00.000Z", 14531118),
+        ],
+    }
+]
+OG_SCROBBLE = history_row(1, 2, "2026-10-05T09:27:00.000Z", 14531117)
+OG_OTHER = history_row(1, 1, "2026-10-05T09:29:00.000Z", 14224604, "watch")
+
+
 def at(iso: str) -> float:
     return datetime.fromisoformat(iso).timestamp()
+
+
+def utc(iso: str) -> datetime:
+    return datetime.fromisoformat(iso.replace("Z", "+00:00"))
 
 
 class FakeJellyfin:
@@ -97,6 +142,8 @@ class FakeTrakt:
         }
         self.seasons = {SHOW: copy.deepcopy(SEASONS)}
         self.history: dict[int, list[dict[str, Any]]] = {}
+        self.show_history: dict[int, list[dict[str, Any]]] = {}
+        self.history_queries: list[dict[str, str]] = []
         self.reply: Any = {"added": {"movies": 0, "episodes": 1}, "not_found": {"episodes": []}}
         self.posts: list[Any] = []
         self.calls: list[tuple[str, str]] = []
@@ -119,6 +166,16 @@ class FakeTrakt:
             return copy.deepcopy(self.seasons[int(path.split("/")[2])])
         if path.startswith("/sync/history/episodes/"):
             return copy.deepcopy(self.history.get(int(path.rsplit("/", 1)[1]), []))
+        if path.startswith("/sync/history/shows/"):
+            # As Trakt answered on 2026-10-05: dates are read as midnight UTC, the end is exclusive, pages of limit.
+            assert query is not None and set(query) == {"start_at", "end_at", "page", "limit"}
+            self.history_queries.append(dict(query))
+            start, end = utc(query["start_at"] + "T00:00:00Z"), utc(query["end_at"] + "T00:00:00Z")
+            rows = [
+                r for r in self.show_history.get(int(path.rsplit("/", 1)[1]), []) if start <= utc(r["watched_at"]) < end
+            ]
+            page, limit = int(query["page"]), int(query["limit"])
+            return copy.deepcopy(rows[(page - 1) * limit : page * limit])
         raise AssertionError(f"unexpected Trakt call {path}")
 
 
@@ -363,6 +420,106 @@ class AccountBindingTests(FillBase):
         self.run_fill()
         self.assertIn(("GET", "/sync/history/episodes/14531280"), self.trakt.calls)
         self.assertEqual(self.state["accounts"], {USER: "vic-new"})
+
+
+class PluginScrobbleTests(FillBase):
+    """An episode the resolver cannot place counts as delivered when Trakt holds the plugin's own scrobble of it."""
+
+    KEY = f"{USER}:{OG_ITEM['Id']}:2026-10-05T09:16:45.000Z"
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.now = at("2026-10-05T09:39:20+00:00")
+        self.use_times("2026-10-05T09:16:45.6989066Z", OG_STOP)
+        self.jellyfin.series = {OG_SERIES_ID: {"ProviderIds": dict(OG_SERIES_IDS)}}
+        self.trakt.search = {
+            (source, OG_SERIES_IDS[key], "show"): [{"type": "show", "show": {"ids": {"trakt": OG_SHOW}}}]
+            for key, source in (("Tvdb", "tvdb"), ("Tmdb", "tmdb"), ("Imdb", "imdb"))
+        }
+        self.trakt.seasons = {OG_SHOW: copy.deepcopy(OG_SEASONS)}
+        self.trakt.show_history = {OG_SHOW: [copy.deepcopy(OG_OTHER), copy.deepcopy(OG_SCROBBLE)]}
+
+    def use_times(self, started: str, stopped: str) -> None:
+        item = copy.deepcopy(OG_ITEM)
+        item["UserData"]["LastPlayedDate"] = started
+        self.jellyfin.items = [item]
+        self.jellyfin.activity = [
+            {"Date": stopped, "Type": "VideoPlaybackStopped", "ItemId": item["Id"], "UserId": USER}
+        ]
+
+    def with_plays(self, *rows: dict[str, Any]) -> dict[str, int]:
+        self.state, self.notes = {}, []
+        self.trakt.show_history = {OG_SHOW: [copy.deepcopy(r) for r in rows]}
+        return self.run_fill()
+
+    def test_regression_the_plugins_scrobble_at_jellyfins_number_counts_as_delivered(self) -> None:
+        tally = self.run_fill()
+        self.assertEqual((tally["on_trakt"], tally["unresolved"], tally["pending"]), (1, 0, 0))
+        self.assertEqual((self.notes, self.trakt.posts, self.state["alerted"]), ([], [], {}))
+        self.assertEqual(self.state["done"], {self.KEY: self.now})
+        self.assertIn(
+            "Overgeared S01E02 'Episode 2': 0 Trakt episodes aired within a day of 2026-10-04, but Trakt holds the "
+            "plugin's scrobble of it at 2026-10-05T09:27:00.000Z: already on Trakt",
+            self.log,
+        )
+        self.assertEqual(
+            self.trakt.history_queries,
+            [{"start_at": "2026-10-05", "end_at": "2026-10-06", "page": "1", "limit": "100"}],
+        )
+        self.now += 900.0
+        self.assertEqual(self.run_fill()["on_trakt"], 1)
+        self.assertEqual(len(self.trakt.history_queries), 1)
+
+    def test_without_that_scrobble_the_episode_is_still_reported(self) -> None:
+        tally = self.with_plays(OG_OTHER)
+        self.assertEqual((tally["unresolved"], tally["on_trakt"], len(self.notes), self.trakt.posts), (1, 0, 1, []))
+        self.assertIn("0 Trakt episodes aired within a day of 2026-10-04", self.notes[0])
+        self.assertEqual(self.state["done"], {})
+
+    def test_a_play_at_another_season_or_number_does_not_count(self) -> None:
+        for season, number in ((2, 2), (1, 3)):
+            with self.subTest(season=season, number=number):
+                tally = self.with_plays(history_row(season, number, "2026-10-05T09:27:00.000Z", 1))
+                self.assertEqual((tally["unresolved"], tally["on_trakt"]), (1, 0))
+
+    def test_the_window_runs_from_15_minutes_before_the_start_to_15_minutes_after_the_stop(self) -> None:
+        # Start 09:16:45.698 and stop 09:27:09.426, so the window is 09:01:45.698 to 09:42:09.426.
+        for watched, counted in (
+            ("2026-10-05T09:01:45.000Z", False),
+            ("2026-10-05T09:01:46.000Z", True),
+            ("2026-10-05T09:42:09.000Z", True),
+            ("2026-10-05T09:42:10.000Z", False),
+        ):
+            with self.subTest(watched=watched):
+                tally = self.with_plays(history_row(1, 2, watched, 14531117))
+                self.assertEqual((tally["on_trakt"], tally["unresolved"]), (int(counted), int(not counted)))
+
+    def test_a_window_across_midnight_asks_for_both_days(self) -> None:
+        self.now = at("2026-10-06T00:30:00+00:00")
+        self.use_times("2026-10-05T23:50:00.0000000Z", "2026-10-06T00:05:00.0000000Z")
+        tally = self.with_plays(history_row(1, 2, "2026-10-06T00:04:00.000Z", 14531117))
+        self.assertEqual(tally["on_trakt"], 1)
+        self.assertEqual(
+            self.trakt.history_queries[-1],
+            {"start_at": "2026-10-05", "end_at": "2026-10-07", "page": "1", "limit": "100"},
+        )
+
+    def test_a_scrobble_on_a_later_page_is_found(self) -> None:
+        others = [history_row(1, 1, f"2026-10-05T09:2{n // 60}:{n % 60:02d}.000Z", 14224604) for n in range(100)]
+        tally = self.with_plays(*others, OG_SCROBBLE)
+        self.assertEqual(tally["on_trakt"], 1)
+        self.assertEqual([q["page"] for q in self.trakt.history_queries], ["1", "2"])
+
+    def test_paging_stops_at_an_empty_page(self) -> None:
+        tally = self.with_plays(OG_OTHER)
+        self.assertEqual(tally["unresolved"], 1)
+        self.assertEqual([q["page"] for q in self.trakt.history_queries], ["1", "2"])
+
+    def test_a_show_that_does_not_resolve_is_reported_without_asking_for_its_history(self) -> None:
+        self.trakt.search = {}
+        tally = self.run_fill()
+        self.assertEqual((tally["unresolved"], self.trakt.history_queries), (1, []))
+        self.assertIn("match 0 Trakt shows", self.notes[0])
 
 
 class HelperTests(unittest.TestCase):

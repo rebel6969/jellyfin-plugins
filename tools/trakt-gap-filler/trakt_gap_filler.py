@@ -5,14 +5,19 @@ Why this exists: on 2026-10-05 an anime episode played to the end in Jellyfin ne
 Jellyfin's library numbers it S03E02 (TVDB order) and holds its TVDB and IMDb ids. Trakt (TMDB order)
 lists it as S01E26 and, one day after it aired, held only its TMDB id. The plugin's scrobble by ids and
 its fallback by show plus S03E02 both got HTTP 404, and the plugin logs a 404 only at Debug level, so
-nothing showed.
+nothing showed. Later that day Overgeared S01E02 did reach Trakt through that fallback (show plus S01E02),
+but Trakt's copy held none of Jellyfin's ids and was dated five days after TVDB's, so this tool could not
+place it and reported a play that was already there.
 
 Each run, for every Jellyfin user linked in the Trakt plugin with scrobbling or "set watched" on:
 - lists the episodes Jellyfin marks played whose last play falls inside the lookback (never before
   TRAKT_GAP_FILLER_SINCE);
 - finds the episode on Trakt: by the episode's own ids (the owning show must match), otherwise in the
   show's Trakt episode list by air date (within a day), preferring the same season and number, then the
-  same title. Anything that does not resolve to exactly one episode is left alone and reported once;
+  same title. Anything that does not resolve to exactly one episode is left alone and reported once,
+  unless Trakt holds a play of that show at Jellyfin's own season and number made while the episode
+  played: that is the plugin's scrobble by show and number, so it counts as delivered (this only ever
+  skips; it never picks an episode to add);
 - skips it if Trakt already holds any play of that episode (cached confirmations are kept per Trakt account and
   dropped when the plugin is linked to a different one). Jellyfin marks an episode played only when
   it is played to the end or marked by hand, so an episode Trakt has never seen is a missed play; a
@@ -41,7 +46,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -52,6 +57,9 @@ USER_AGENT = f"{NAME}/1.0"
 ID_KEYS = (("Tvdb", "tvdb"), ("Tmdb", "tmdb"), ("Imdb", "imdb"))
 HEX64 = re.compile(rb"(?:[0-9a-f]\x00){64}")
 TIME_RE = re.compile(r"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d+))?(?:Z|\+00:00)?$")
+# The plugin scrobbles when playback stops; a play of the show at Jellyfin's season and number made this many
+# seconds either side of the playback is that scrobble.
+PLUGIN_WINDOW = 900.0
 
 Clock = Callable[[], float]
 
@@ -302,6 +310,26 @@ def stop_times(jellyfin: Api, cutoff: datetime) -> dict[tuple[str, str], datetim
     return latest
 
 
+def plugin_scrobble(trakt: Api, show: int, item: dict[str, Any], started: datetime, stopped: datetime) -> str | None:
+    """When Trakt knows none of an episode's ids, the plugin scrobbles it by the show plus Jellyfin's season and
+    number. Return the time of a play Trakt holds for this show at that season and number, made from PLUGIN_WINDOW
+    before the playback started to PLUGIN_WINDOW after it stopped, else None. Trakt takes start_at/end_at as
+    dates (midnight UTC, end exclusive), so whole days are asked for and the exact window is applied here."""
+    low = datetime.fromtimestamp(started.timestamp() - PLUGIN_WINDOW, timezone.utc)
+    high = datetime.fromtimestamp(stopped.timestamp() + PLUGIN_WINDOW, timezone.utc)
+    days = {"start_at": low.date().isoformat(), "end_at": (high.date() + timedelta(days=1)).isoformat()}
+    target = (item.get("ParentIndexNumber"), item.get("IndexNumber"))
+    page = 1
+    while rows := trakt.call("GET", f"/sync/history/shows/{show}", {**days, "page": str(page), "limit": "100"}):
+        for row in rows:
+            when = parse_time(row.get("watched_at"))
+            episode = row.get("episode") or {}
+            if when and low <= when <= high and (episode.get("season"), episode.get("number")) == target:
+                return trakt_time(when)
+        page += 1
+    return None
+
+
 def label(item: dict[str, Any]) -> str:
     return f"{item.get('SeriesName')} S{item.get('ParentIndexNumber') or 0:02d}E{item.get('IndexNumber') or 0:02d} '{item.get('Name')}'"
 
@@ -361,14 +389,26 @@ def fill(
             if key in state["done"]:
                 tally["on_trakt"] += 1
                 continue
+            watched = max(stops.get((user.jellyfin_id, str(item["Id"]).lower()), played), played)
+            show: int | None = None
             try:
                 sid = item.get("SeriesId") or ""
                 if sid not in series_ids:
                     series_ids[sid] = (jellyfin.call("GET", f"/Items/{sid}", {"userId": user.jellyfin_id}) or {}).get(
                         "ProviderIds"
                     ) or {}
-                episode, how = resolver.episode(resolver.show(series_ids[sid]), item)
+                show = resolver.show(series_ids[sid])
+                episode, how = resolver.episode(show, item)
             except Unresolved as reason:
+                scrobbled = None if show is None else plugin_scrobble(trakt, show, item, played, watched)
+                if scrobbled:
+                    tally["on_trakt"] += 1
+                    state["done"][key] = now
+                    log(
+                        "INFO",
+                        f"{label(item)}: {reason}, but Trakt holds the plugin's scrobble of it at {scrobbled}: already on Trakt",
+                    )
+                    continue
                 tally["unresolved"] += 1
                 if key not in state["alerted"]:
                     log("WARN", f"{label(item)}: not matched on Trakt, left alone: {reason}")
@@ -390,8 +430,6 @@ def fill(
                 tally["pending"] += 1
                 log("INFO", f"{label(item)} -> {target}: missing on Trakt; added if still missing after {settle:.0f} s")
                 continue
-            watched = stops.get((user.jellyfin_id, str(item["Id"]).lower()), played)
-            watched = max(watched, played)
             if not apply:
                 tally["would_add"] += 1
                 log("INFO", f"dry run: would add {label(item)} -> {target}, watched {trakt_time(watched)}")

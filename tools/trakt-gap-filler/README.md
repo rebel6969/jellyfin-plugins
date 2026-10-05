@@ -18,7 +18,11 @@ Each run, for every Jellyfin user linked in the Trakt plugin with **Scrobble** o
 1. Lists the episodes Jellyfin marks played whose last play is within the lookback (default 72 h).
 2. Finds the Trakt episode: by the episode's own TVDB/TMDB/IMDb ids, accepted only if Trakt says it belongs to the
    same show; otherwise in the show's Trakt episode list by **air date (within one day)**, preferring the same
-   season and number, then the same title. Anything that is not exactly one episode is left alone and reported once.
+   season and number, then the same title. Anything that is not exactly one episode is left alone and reported once,
+   unless Trakt holds the plugin's own scrobble of it: a play of that show at Jellyfin's season and number, made
+   from 15 minutes before the playback started to 15 minutes after it stopped. The plugin's fallback by show +
+   season/episode does land when those numbers exist on Trakt, even if Trakt knows none of the episode's ids and
+   dates it differently. This check only ever skips; it never picks an episode to add.
 3. Skips the episode if Trakt already has **any** play of it. Jellyfin marks an episode played only when it is
    played to the end or marked by hand, so an episode Trakt has never seen is a missed play.
    Confirmations are cached per Trakt account: when the plugin is linked to another account, the cache for that
@@ -48,6 +52,7 @@ Without `--apply` it only logs what it would add. Every decision is logged to th
 
 ```
 As a Reincarnated Aristocrat, I'll Use My Appraisal Skill to Rise in the World S03E02 'Episode 2' -> Trakt S01E26 'Canarre in Crisis' (id 14531280, by air date): already on Trakt
+Overgeared S01E02 'Episode 2': 0 Trakt episodes aired within a day of 2026-10-04, but Trakt holds the plugin's scrobble of it at 2026-10-05T09:27:00.000Z: already on Trakt
 ```
 
 | Variable | Default | Meaning |
@@ -67,5 +72,5 @@ As a Reincarnated Aristocrat, I'll Use My Appraisal Skill to Rise in the World S
 python3 -W error -m unittest test_trakt_gap_filler
 ```
 
-28 tests against fake Jellyfin and Trakt APIs built from the real case above; each safety rule was also broken on
-purpose and caught by its test (23 of 23).
+36 tests against fake Jellyfin and Trakt APIs built from the two real cases above; each safety rule was also broken
+on purpose and caught by its test (23 of 23 for the original rules, 20 of 20 for the plugin-scrobble check).

@@ -46,11 +46,19 @@
   {
     "guid": "8388cbab-8a47-488b-a56a-2fc135bc27a0",
     "name": "Simkl Mark Sync",
-    "description": "Sends the movies and episodes you mark played or unplayed in Jellyfin to Simkl. Uses the Simkl login saved by the official Simkl plugin, which only sends what you play. A removal always names its episodes, so Simkl never deletes a whole show.",
+    "description": "Sends movies and episodes you mark played or unplayed, and every playback Jellyfin counts as finished, to Simkl, using the official Simkl plugin's login. A removal always names its episodes, so Simkl never deletes a whole show.",
     "overview": "Send manual played / unplayed marks to Simkl",
     "owner": "rebel6969",
     "category": "General",
     "versions": [
+      {
+        "version": "1.1.0.0",
+        "targetAbi": "12.1.0.0",
+        "changelog": "Also sends every playback Jellyfin counts as finished, so a watch reaches Simkl when the official plugin misses it; optional rewatch tracking for Simkl PRO/VIP.",
+        "sourceUrl": "https://github.com/rebel6969/jellyfin-plugins/releases/download/simkl-mark-sync-v1.1.0.0/simkl-mark-sync_1.1.0.0.zip",
+        "checksum": "099580154bdea73698fada636f18aa0a",
+        "timestamp": "2026-10-13T13:14:17.0000000Z"
+      },
       {
         "version": "1.0.0.0",
         "changelog": "First release: manual played and unplayed marks of movies and episodes are sent to Simkl in batches, using the official Simkl plugin's login.",
@@ -58,6 +66,24 @@
         "sourceUrl": "https://github.com/rebel6969/jellyfin-plugins/releases/download/simkl-mark-sync-v1.0.0.0/simkl-mark-sync_1.0.0.0.zip",
         "checksum": "de325309b27a2eec83a2f2b896b69134",
         "timestamp": "2026-10-04T04:58:27.0000000Z"
+      }
+    ]
+  },
+  {
+    "guid": "07caef58-a94b-4211-a62c-f9774e04ebdb",
+    "name": "Simkl",
+    "description": "The official Simkl scrobbler (v9) with one fix: a playback started again shortly after a stop is scrobbled. Same plugin ID as the official plugin.",
+    "overview": "Scrobble to Simkl",
+    "owner": "rebel6969",
+    "category": "General",
+    "versions": [
+      {
+        "version": "9.1.0.0",
+        "targetAbi": "12.2.0.0",
+        "changelog": "Official v9 plus the replay fix: a playback started again shortly after a stop is scrobbled; v9 ignored it and its final stop.",
+        "sourceUrl": "https://github.com/rebel6969/jellyfin-plugins/releases/download/simkl-v9.1.0.0/simkl_9.1.0.0.zip",
+        "checksum": "e3a7a0a0d6db39cd14a8f977337f532d",
+        "timestamp": "2026-10-13T13:14:17.0000000Z"
       }
     ]
   }

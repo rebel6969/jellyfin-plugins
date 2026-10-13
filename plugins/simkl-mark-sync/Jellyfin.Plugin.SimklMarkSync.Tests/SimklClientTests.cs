@@ -63,12 +63,13 @@ public sealed class SimklClientTests : IDisposable
         _handler.Enqueue(Reply(HttpStatusCode.Created, AddedJson));
         var request = SimklPayload.BuildAdd([Marks.Movie("tt1")]);
 
-        await Run(() => _client.AddToHistoryAsync(request, ClientId, User, Token));
+        await Run(() => _client.AddToHistoryAsync(request, ClientId, User, allowRewatch: false, Token));
 
         var sent = Assert.Single(_handler.Requests);
         Assert.Equal(HttpMethod.Post, sent.Method);
-        Assert.Equal("https://api.simkl.com/sync/history?client_id=fixture-client-id&app-name=jellyfin-simkl-mark-sync&app-version=1.0.0.0", sent.Uri.AbsoluteUri);
-        Assert.Contains("User-Agent: jellyfin-simkl-mark-sync/1.0.0.0", sent.Headers, StringComparison.Ordinal);
+        var version = typeof(SimklClient).Assembly.GetName().Version!.ToString();
+        Assert.Equal($"https://api.simkl.com/sync/history?client_id=fixture-client-id&app-name=jellyfin-simkl-mark-sync&app-version={version}", sent.Uri.AbsoluteUri);
+        Assert.Contains($"User-Agent: jellyfin-simkl-mark-sync/{version}", sent.Headers, StringComparison.Ordinal);
         Assert.Contains("Authorization: Bearer token-a", sent.Headers, StringComparison.Ordinal);
         Assert.Contains("Accept: application/json", sent.Headers, StringComparison.Ordinal);
         Assert.Equal("application/json; charset=utf-8", sent.ContentType);
@@ -84,7 +85,7 @@ public sealed class SimklClientTests : IDisposable
     {
         _handler.Enqueue(Reply(HttpStatusCode.Created, AddedJson));
 
-        await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), "a&b", User, Token));
+        await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), "a&b", User, allowRewatch: false, Token));
 
         Assert.StartsWith("?client_id=a%26b&app-name=", Assert.Single(_handler.Requests).Uri.Query, StringComparison.Ordinal);
     }
@@ -100,7 +101,7 @@ public sealed class SimklClientTests : IDisposable
             HttpStatusCode.Created,
             """{"added":{"movies":1,"shows":0,"episodes":2},"not_found":{"movies":[{"title":"Nope","ids":{"imdb":"tt0"}}],"shows":[{"ids":{"tvdb":"9"}}],"episodes":[]}}"""));
 
-        var result = await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), ClientId, User, Token));
+        var result = await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), ClientId, User, allowRewatch: false, Token));
 
         Assert.NotNull(result);
         Assert.Equal((1, 0, 2), (result.Movies, result.Shows, result.Episodes));
@@ -149,7 +150,7 @@ public sealed class SimklClientTests : IDisposable
         _handler.Enqueue(Reply(HttpStatusCode.TooManyRequests, """{"error":"rate_limit","code":429}""", TimeSpan.FromSeconds(5)));
         _handler.Enqueue(Reply(HttpStatusCode.Created, AddedJson));
 
-        var result = await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), ClientId, User, Token));
+        var result = await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), ClientId, User, allowRewatch: false, Token));
 
         Assert.NotNull(result);
         var requests = _handler.Requests;
@@ -173,7 +174,7 @@ public sealed class SimklClientTests : IDisposable
         });
         _handler.Enqueue(Reply(HttpStatusCode.Created, AddedJson));
 
-        await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), ClientId, User, Token));
+        await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), ClientId, User, allowRewatch: false, Token));
 
         var requests = _handler.Requests;
         Assert.InRange(requests[1].At - requests[0].At, TimeSpan.FromSeconds(7), TimeSpan.FromSeconds(7.5));
@@ -189,7 +190,7 @@ public sealed class SimklClientTests : IDisposable
         _handler.Enqueue(Reply(HttpStatusCode.TooManyRequests, "{}", TimeSpan.FromHours(1)));
         _handler.Enqueue(Reply(HttpStatusCode.Created, AddedJson));
 
-        await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), ClientId, User, Token));
+        await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), ClientId, User, allowRewatch: false, Token));
 
         var requests = _handler.Requests;
         Assert.InRange(requests[1].At - requests[0].At, SimklClient.MaxRetryDelay, SimklClient.MaxRetryDelay + TimeSpan.FromSeconds(0.5));
@@ -207,7 +208,7 @@ public sealed class SimklClientTests : IDisposable
             _handler.Enqueue(Reply(HttpStatusCode.InternalServerError, """{"error":"internal","code":500}"""));
         }
 
-        var result = await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), ClientId, User, Token));
+        var result = await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), ClientId, User, allowRewatch: false, Token));
 
         Assert.Null(result);
         var requests = _handler.Requests;
@@ -227,7 +228,7 @@ public sealed class SimklClientTests : IDisposable
         _handler.Enqueue(() => throw new HttpRequestException("connection reset by peer"));
         _handler.Enqueue(Reply(HttpStatusCode.Created, AddedJson));
 
-        var result = await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), ClientId, User, Token));
+        var result = await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), ClientId, User, allowRewatch: false, Token));
 
         Assert.NotNull(result);
         Assert.Equal(2, _handler.Requests.Count);
@@ -244,7 +245,7 @@ public sealed class SimklClientTests : IDisposable
         _handler.Enqueue(() => throw new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout"));
         _handler.Enqueue(Reply(HttpStatusCode.Created, AddedJson));
 
-        var result = await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), ClientId, User, Token));
+        var result = await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), ClientId, User, allowRewatch: false, Token));
 
         Assert.NotNull(result);
         Assert.Contains("timed out", Assert.Single(_logger.At(LogLevel.Warning)), StringComparison.Ordinal);
@@ -261,7 +262,7 @@ public sealed class SimklClientTests : IDisposable
         await cancelled.CancelAsync();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), ClientId, User, cancelled.Token));
+            () => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), ClientId, User, allowRewatch: false, cancelled.Token));
 
         Assert.Empty(_logger.Entries);
     }
@@ -275,7 +276,7 @@ public sealed class SimklClientTests : IDisposable
     {
         _handler.Enqueue(Reply(HttpStatusCode.Unauthorized, """{"error":"user_token_failed"}"""));
 
-        var result = await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), ClientId, User, Token));
+        var result = await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), ClientId, User, allowRewatch: false, Token));
 
         Assert.Null(result);
         Assert.Single(_handler.Requests);
@@ -291,7 +292,7 @@ public sealed class SimklClientTests : IDisposable
     {
         _handler.Enqueue(Reply(HttpStatusCode.PreconditionFailed, """{"error":"client_id_failed","code":412}"""));
 
-        Assert.Null(await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), ClientId, User, Token)));
+        Assert.Null(await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), ClientId, User, allowRewatch: false, Token)));
         Assert.Single(_handler.Requests);
         Assert.Contains("HTTP 412", Assert.Single(_logger.At(LogLevel.Error)), StringComparison.Ordinal);
     }
@@ -305,7 +306,7 @@ public sealed class SimklClientTests : IDisposable
     {
         _handler.Enqueue(Reply(HttpStatusCode.BadRequest, """{"error":"wrong_parameter","code":400}"""));
 
-        Assert.Null(await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), ClientId, User, Token)));
+        Assert.Null(await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), ClientId, User, allowRewatch: false, Token)));
         Assert.Single(_handler.Requests);
         Assert.Contains("HTTP 400", Assert.Single(_logger.At(LogLevel.Error)), StringComparison.Ordinal);
     }
@@ -322,7 +323,7 @@ public sealed class SimklClientTests : IDisposable
     {
         _handler.Enqueue(Reply(status, "  <!DOCTYPE html><title>Just a moment...</title>"));
 
-        Assert.Null(await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), ClientId, User, Token)));
+        Assert.Null(await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), ClientId, User, allowRewatch: false, Token)));
         Assert.Single(_handler.Requests);
         Assert.Contains("web page", Assert.Single(_logger.At(LogLevel.Error)), StringComparison.Ordinal);
     }
@@ -336,7 +337,7 @@ public sealed class SimklClientTests : IDisposable
     {
         _handler.Enqueue(Reply(HttpStatusCode.Created, "not json"));
 
-        Assert.Null(await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), ClientId, User, Token)));
+        Assert.Null(await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), ClientId, User, allowRewatch: false, Token)));
         Assert.Contains("invalid JSON", Assert.Single(_logger.At(LogLevel.Error)), StringComparison.Ordinal);
     }
 
@@ -349,7 +350,7 @@ public sealed class SimklClientTests : IDisposable
     {
         _handler.Enqueue(Reply(HttpStatusCode.Created, "[]"));
 
-        Assert.Null(await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), ClientId, User, Token)));
+        Assert.Null(await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), ClientId, User, allowRewatch: false, Token)));
         Assert.Contains("unexpected JSON", Assert.Single(_logger.At(LogLevel.Error)), StringComparison.Ordinal);
     }
 
@@ -363,8 +364,8 @@ public sealed class SimklClientTests : IDisposable
         _handler.Enqueue(Reply(HttpStatusCode.Created, AddedJson));
         _handler.Enqueue(Reply(HttpStatusCode.Created, AddedJson));
 
-        await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), ClientId, User, Token));
-        await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt2")]), ClientId, User, Token));
+        await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), ClientId, User, allowRewatch: false, Token));
+        await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt2")]), ClientId, User, allowRewatch: false, Token));
 
         var requests = _handler.Requests;
         Assert.InRange(requests[1].At - requests[0].At, SimklClient.MinPostInterval, SimklClient.MinPostInterval + TimeSpan.FromSeconds(0.5));
@@ -380,9 +381,9 @@ public sealed class SimklClientTests : IDisposable
         _handler.Enqueue(Reply(HttpStatusCode.Created, AddedJson));
         _handler.Enqueue(Reply(HttpStatusCode.Created, AddedJson));
 
-        await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), ClientId, User, Token));
+        await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), ClientId, User, allowRewatch: false, Token));
         _clock.Advance(TimeSpan.FromMinutes(1));
-        await _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt2")]), ClientId, User, Token);
+        await _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt2")]), ClientId, User, allowRewatch: false, Token);
 
         Assert.Equal(2, _handler.Requests.Count);
     }
@@ -458,11 +459,96 @@ public sealed class SimklClientTests : IDisposable
     {
         _handler.Enqueue(Reply(HttpStatusCode.BadRequest, new string('x', 5000)));
 
-        await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), ClientId, User, Token));
+        await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), ClientId, User, allowRewatch: false, Token));
 
         var error = Assert.Single(_logger.At(LogLevel.Error));
         Assert.EndsWith(new string('x', 512) + "…", error, StringComparison.Ordinal);
         Assert.DoesNotContain(new string('x', 513), error, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// allow_rewatch=yes is on the URL only when asked for.
+    /// </summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task SendsAllowRewatchOnlyWhenAsked()
+    {
+        _handler.Enqueue(Reply(HttpStatusCode.Created, AddedJson));
+        _handler.Enqueue(Reply(HttpStatusCode.Created, AddedJson));
+
+        await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), ClientId, User, allowRewatch: true, Token));
+        await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt2")]), ClientId, User, allowRewatch: false, Token));
+
+        var requests = _handler.Requests;
+        Assert.EndsWith("&allow_rewatch=yes", requests[0].Uri.Query, StringComparison.Ordinal);
+        Assert.DoesNotContain("allow_rewatch", requests[1].Uri.Query, StringComparison.Ordinal);
+        Assert.Equal("/sync/history", requests[0].Uri.AbsolutePath);
+    }
+
+    /// <summary>
+    /// Each item's rewatch_status in the add answer is read; items without one are skipped.
+    /// </summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task ReadsTheRewatchStatusOfEachItem()
+    {
+        _handler.Enqueue(Reply(
+            HttpStatusCode.Created,
+            """{"added":{"movies":0,"shows":0,"episodes":0,"statuses":[{"response":{"status":"completed","rewatch_status":"completed","rewatch_id":7}},{"response":{"status":"completed"}},{"response":{"rewatch_status":"too_soon"}}]},"not_found":{"movies":[]}}"""));
+
+        var result = await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), ClientId, User, allowRewatch: true, Token));
+
+        Assert.Equal(["completed", "too_soon"], result!.RewatchStatuses);
+    }
+
+    /// <summary>
+    /// The plan is read with a GET of /users/settings, with the login and no body.
+    /// </summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task ReadsTheAccountPlan()
+    {
+        _handler.Enqueue(Reply(HttpStatusCode.OK, """{"user":{"name":"Vic"},"account":{"id":9102837,"timezone":"Asia/Calcutta","type":"pro"}}"""));
+
+        var plan = await Run(() => _client.GetAccountTypeAsync(ClientId, User, Token));
+
+        Assert.Equal("pro", plan);
+        var sent = Assert.Single(_handler.Requests);
+        Assert.Equal(HttpMethod.Get, sent.Method);
+        Assert.Equal("/users/settings", sent.Uri.AbsolutePath);
+        Assert.Null(sent.Body);
+        Assert.Contains("Authorization: Bearer token-a", sent.Headers, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// An answer without an account type, or one that is not JSON, gives no plan and says why.
+    /// </summary>
+    /// <param name="body">The answer.</param>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Theory]
+    [InlineData("""{"user":{"name":"Vic"}}""")]
+    [InlineData("""{"account":{"type":""}}""")]
+    [InlineData("""{"account":{"type":3}}""")]
+    [InlineData("""[]""")]
+    [InlineData("""{not json""")]
+    public async Task GivesNoPlanForAnUnusableAnswer(string body)
+    {
+        _handler.Enqueue(Reply(HttpStatusCode.OK, body));
+
+        Assert.Null(await Run(() => _client.GetAccountTypeAsync(ClientId, User, Token)));
+        Assert.Single(_logger.At(LogLevel.Error));
+    }
+
+    /// <summary>
+    /// A rejected plan read gives no plan.
+    /// </summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task GivesNoPlanWhenTheReadIsRejected()
+    {
+        _handler.Enqueue(Reply(HttpStatusCode.Unauthorized, """{"error":"user_token_failed"}"""));
+
+        Assert.Null(await Run(() => _client.GetAccountTypeAsync(ClientId, User, Token)));
     }
 
     private static Func<HttpResponseMessage> Reply(HttpStatusCode status, string body, TimeSpan? retryAfter = null) => () =>

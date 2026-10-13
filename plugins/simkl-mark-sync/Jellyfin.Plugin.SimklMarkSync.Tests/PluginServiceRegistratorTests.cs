@@ -6,6 +6,7 @@ using MediaBrowser.Common.Configuration;
 using MediaBrowser.Common.Plugins;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.Session;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Time.Testing;
@@ -42,6 +43,7 @@ public sealed class PluginServiceRegistratorTests
         Assert.Same(provider.GetRequiredService<ISimklClient>(), provider.GetRequiredService<ISimklClient>());
         Assert.IsType<SimklCredentials>(provider.GetRequiredService<ISimklCredentials>());
         Assert.Same(provider.GetRequiredService<ISimklCredentials>(), provider.GetRequiredService<ISimklCredentials>());
+        Assert.IsType<PluginSettings>(provider.GetRequiredService<IMarkSyncSettings>());
     }
 
     /// <summary>
@@ -76,6 +78,7 @@ public sealed class PluginServiceRegistratorTests
         services.AddLogging();
         services.AddSingleton(paths.Object);
         services.AddSingleton(Mock.Of<IUserDataManager>());
+        services.AddSingleton(Mock.Of<ISessionManager>());
         services.AddSingleton(Mock.Of<IPluginManager>());
         services.AddSingleton(Mock.Of<IHttpClientFactory>());
         hostRegistrations?.Invoke(services);

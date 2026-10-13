@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en"><head><title>Simkl Mark Sync</title></head><body>
+<div id="simklMarkSyncConfig" data-role="page" class="page type-interior pluginConfigurationPage">
+  <div class="content-primary" style="max-width:48em">
+    <h2>Simkl Mark Sync</h2>
+    <p>Sends what you mark played or unplayed, and every playback Jellyfin counts as finished, to Simkl. It uses the
+      login saved in the official Simkl plugin's settings.</p>
+    <form id="smsForm">
+      <label class="emby-checkbox-label"><input id="smsRewatches" type="checkbox" /> Track rewatches</label>
+      <p class="fieldDescription">When you finish something you have already watched, record it on Simkl as a rewatch.
+        Simkl keeps rewatches only for PRO and VIP accounts; on a free account the watch is sent as before.</p>
+      <button id="smsSave" type="submit" class="emby-button raised button-submit" disabled>Save</button>
+      <p id="smsStatus" role="status" aria-live="polite"></p>
+    </form>
+  </div>
+  <script>
+  (() => {
+    const page = document.getElementById('simklMarkSyncConfig');
+    const pluginId = '8388cbab-8a47-488b-a56a-2fc135bc27a0';
+    const status = page.querySelector('#smsStatus');
+    const save = page.querySelector('#smsSave');
+    let configuration = null;
+    let loading = false;
+    async function load() {
+      if (loading) return;
+      loading = true;
+      save.disabled = true;
+      try {
+        configuration = await ApiClient.getPluginConfiguration(pluginId);
+        page.querySelector('#smsRewatches').checked = configuration.TrackRewatches === true;
+        status.textContent = '';
+        save.disabled = false;
+      } catch (error) {
+        configuration = null;
+        status.textContent = 'Could not load settings. Reload this page before saving.';
+        console.error('Simkl Mark Sync settings load failed', error);
+      } finally { loading = false; }
+    }
+    page.querySelector('#smsForm').addEventListener('submit', async event => {
+      event.preventDefault();
+      if (!configuration || save.disabled) return;
+      save.disabled = true;
+      try {
+        const next = { ...configuration, TrackRewatches: page.querySelector('#smsRewatches').checked };
+        await ApiClient.updatePluginConfiguration(pluginId, next);
+        configuration = next;
+        status.textContent = 'Saved. Applies to the next finished playback; no restart needed.';
+      } catch (error) {
+        status.textContent = 'Save failed. Your new settings were not confirmed.';
+        console.error('Simkl Mark Sync settings save failed', error);
+      } finally { save.disabled = false; }
+    });
+    page.addEventListener('pageshow', load);
+    page.addEventListener('viewshow', load);
+    load();
+  })();
+  </script>
+</div></body></html>

@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Model.Serialization;
 using Microsoft.Extensions.DependencyInjection;
@@ -34,5 +35,57 @@ public sealed class PluginTests
         Assert.Equal(Plugin.PluginId, plugin.Id);
         Assert.Equal("Simkl Mark Sync", plugin.Name);
         Assert.False(string.IsNullOrEmpty(plugin.Description));
+        Assert.Same(plugin, Plugin.Instance);
+    }
+
+    /// <summary>
+    /// The settings page is listed and its HTML is embedded under the listed name, with the rewatch switch on it.
+    /// </summary>
+    [Fact]
+    public void ServesTheSettingsPage()
+    {
+        var paths = new Mock<IApplicationPaths>();
+        paths.Setup(p => p.PluginsPath).Returns("/config/data/plugins");
+        paths.Setup(p => p.PluginConfigurationsPath).Returns("/config/data/plugins/configurations");
+        var plugin = new Plugin(paths.Object, Mock.Of<IXmlSerializer>());
+
+        var page = Assert.Single(plugin.GetPages());
+        using var stream = typeof(Plugin).Assembly.GetManifestResourceStream(page.EmbeddedResourcePath);
+
+        Assert.NotNull(stream);
+        using var reader = new StreamReader(stream);
+        var html = reader.ReadToEnd();
+        Assert.Contains("TrackRewatches", html, StringComparison.Ordinal);
+        Assert.Contains(Plugin.PluginId.ToString(), html, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The settings the sending path reads follow what was saved, off until switched on.
+    /// </summary>
+    [Fact]
+    public void ReadsTheSavedRewatchSetting()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "simkl-mark-sync-tests-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var paths = new Mock<IApplicationPaths>();
+            paths.Setup(p => p.PluginsPath).Returns(folder);
+            paths.Setup(p => p.PluginConfigurationsPath).Returns(folder);
+            var plugin = new Plugin(paths.Object, Mock.Of<IXmlSerializer>());
+            var settings = new PluginSettings();
+            plugin.UpdateConfiguration(new Configuration.PluginConfiguration());
+            Assert.False(settings.TrackRewatches);
+
+            plugin.UpdateConfiguration(new Configuration.PluginConfiguration { TrackRewatches = true });
+
+            Assert.True(settings.TrackRewatches);
+        }
+        finally
+        {
+            if (Directory.Exists(folder))
+            {
+                Directory.Delete(folder, recursive: true);
+            }
+        }
     }
 }

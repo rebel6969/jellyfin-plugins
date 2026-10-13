@@ -1,7 +1,9 @@
 using System;
+using System.Collections.Generic;
 using Jellyfin.Plugin.SimklMarkSync.Configuration;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Common.Plugins;
+using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model.Serialization;
 
 namespace Jellyfin.Plugin.SimklMarkSync;
@@ -14,7 +16,7 @@ namespace Jellyfin.Plugin.SimklMarkSync;
 /// <c>SetAttributes</c>, which fills in <see cref="BasePlugin.Version"/> and <see cref="BasePlugin.AssemblyFilePath"/>.
 /// Jellyfin's plugin loader reads <c>Version.ToString()</c> right after creating the instance.
 /// </remarks>
-public sealed class Plugin : BasePlugin<PluginConfiguration>
+public sealed class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
 {
     /// <summary>
     /// The plugin identifier.
@@ -29,7 +31,13 @@ public sealed class Plugin : BasePlugin<PluginConfiguration>
     public Plugin(IApplicationPaths applicationPaths, IXmlSerializer xmlSerializer)
         : base(applicationPaths, xmlSerializer)
     {
+        Instance = this;
     }
+
+    /// <summary>
+    /// Gets the instance Jellyfin loaded, so the sending path can read the saved settings.
+    /// </summary>
+    public static Plugin? Instance { get; private set; }
 
     /// <inheritdoc />
     public override string Name => "Simkl Mark Sync";
@@ -39,6 +47,11 @@ public sealed class Plugin : BasePlugin<PluginConfiguration>
 
     /// <inheritdoc />
     public override string Description =>
-        "Sends a movie or episode you mark played or unplayed in Jellyfin to Simkl. "
-        + "It uses the Simkl login saved by the official Simkl plugin, which only sends playback.";
+        "Sends the movies and episodes you mark played or unplayed, and every playback Jellyfin counts as finished, "
+        + "to Simkl, so a watch reaches Simkl even when the official Simkl plugin misses it. "
+        + "It uses the Simkl login saved by the official Simkl plugin.";
+
+    /// <inheritdoc />
+    public IEnumerable<PluginPageInfo> GetPages() =>
+        [new PluginPageInfo { Name = "SimklMarkSync", EmbeddedResourcePath = GetType().Namespace + ".Configuration.config.html" }];
 }

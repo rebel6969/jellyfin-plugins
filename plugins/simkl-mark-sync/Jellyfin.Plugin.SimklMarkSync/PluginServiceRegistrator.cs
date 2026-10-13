@@ -19,6 +19,7 @@ public sealed class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.TryAddSingleton(TimeProvider.System);
         serviceCollection.AddSingleton<ISimklCredentials, SimklCredentials>();
         serviceCollection.AddSingleton<ISimklClient, SimklClient>();
+        serviceCollection.AddSingleton<IMarkSyncSettings, PluginSettings>();
         serviceCollection.AddSingleton<MarkSyncProcessor>();
         serviceCollection.AddHostedService<MarkSyncService>();
     }

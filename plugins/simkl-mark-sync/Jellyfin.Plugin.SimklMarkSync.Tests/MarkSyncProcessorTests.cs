@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.SimklMarkSync.Simkl;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Time.Testing;
 using Moq;
 using Xunit;
 
@@ -24,10 +25,15 @@ public sealed class MarkSyncProcessorTests
     private readonly ListLogger<MarkSyncProcessor> _logger = new();
     private readonly List<(HistoryRequest Request, SimklUser User)> _added = [];
     private readonly List<HistoryRequest> _removed = [];
+    private readonly List<bool> _rewatchFlags = [];
+    private readonly FakeSettings _settings = new();
+    private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 10, 13, 12, 15, 0, TimeSpan.Zero));
     private readonly List<IReadOnlyList<WatchedLookupItem>> _lookups = [];
     private readonly MarkSyncProcessor _processor;
     private SimklUser _user = new("token-a", syncMovies: true, syncShows: true);
     private SimklWriteResult? _addResult = new(0, 0, 0, []);
+    private string? _plan = "free";
+    private int _planReads;
     private Func<IReadOnlyList<WatchedLookupItem>, IReadOnlyList<WatchedStatus>?> _watched = items => items.Select(_ => Completed).ToList();
 
     /// <summary>
@@ -38,8 +44,12 @@ public sealed class MarkSyncProcessorTests
         _credentials.Setup(c => c.GetClientId()).Returns(ClientId);
         _credentials.Setup(c => c.GetUser(Marks.User)).Returns(() => _user);
         _client
-            .Setup(c => c.AddToHistoryAsync(It.IsAny<HistoryRequest>(), ClientId, It.IsAny<SimklUser>(), It.IsAny<CancellationToken>()))
-            .Callback<HistoryRequest, string, SimklUser, CancellationToken>((request, _, user, _) => _added.Add((request, user)))
+            .Setup(c => c.AddToHistoryAsync(It.IsAny<HistoryRequest>(), ClientId, It.IsAny<SimklUser>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback<HistoryRequest, string, SimklUser, bool, CancellationToken>((request, _, user, rewatch, _) =>
+            {
+                _added.Add((request, user));
+                _rewatchFlags.Add(rewatch);
+            })
             .ReturnsAsync(() => _addResult);
         _client
             .Setup(c => c.RemoveFromHistoryAsync(It.IsAny<HistoryRequest>(), ClientId, It.IsAny<SimklUser>(), It.IsAny<CancellationToken>()))
@@ -49,7 +59,11 @@ public sealed class MarkSyncProcessorTests
             .Setup(c => c.GetWatchedAsync(It.IsAny<IReadOnlyList<WatchedLookupItem>>(), ClientId, It.IsAny<SimklUser>(), It.IsAny<CancellationToken>()))
             .Callback<IReadOnlyList<WatchedLookupItem>, string, SimklUser, CancellationToken>((items, _, _, _) => _lookups.Add(items))
             .ReturnsAsync((IReadOnlyList<WatchedLookupItem> items, string _, SimklUser _, CancellationToken _) => _watched(items));
-        _processor = new MarkSyncProcessor(_credentials.Object, _client.Object, _logger);
+        _client
+            .Setup(c => c.GetAccountTypeAsync(ClientId, It.IsAny<SimklUser>(), It.IsAny<CancellationToken>()))
+            .Callback(() => _planReads++)
+            .ReturnsAsync(() => _plan);
+        _processor = new MarkSyncProcessor(_credentials.Object, _client.Object, _settings, _clock, _logger);
     }
 
     private static WatchedStatus Completed => new(Matched: true, Watched: true, List: "completed");
@@ -332,4 +346,147 @@ public sealed class MarkSyncProcessorTests
 
         Assert.Empty(_logger.Entries);
     }
+
+    /// <summary>
+    /// With rewatch tracking off, finished playbacks go out as plain watches with the manual marks, and the plan is
+    /// never read.
+    /// </summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task SendsFinishedPlaybacksAsPlainWatchesWhenRewatchesAreOff()
+    {
+        await _processor.ProcessAsync([Finished("tt1"), Marks.Movie("tt2")], Token);
+
+        Assert.Equal([false], _rewatchFlags);
+        Assert.Equal(2, Assert.Single(_added).Request.Movies!.Count);
+        Assert.Equal(0, _planReads);
+    }
+
+    /// <summary>
+    /// On a PRO account, finished playbacks go out with allow_rewatch and manual marks without it.
+    /// </summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task SendsFinishedPlaybacksAsRewatchesOnAPaidPlan()
+    {
+        _settings.TrackRewatches = true;
+        _plan = "pro";
+        _addResult = new(1, 0, 0, []) { RewatchStatuses = ["completed"] };
+
+        await _processor.ProcessAsync([Finished("tt1"), Marks.Movie("tt2")], Token);
+
+        Assert.Equal([false, true], _rewatchFlags);
+        Assert.Equal("tt2", Assert.Single(_added[0].Request.Movies!).Ids["imdb"]);
+        Assert.Equal("tt1", Assert.Single(_added[1].Request.Movies!).Ids["imdb"]);
+        Assert.Contains(_logger.At(LogLevel.Information), m => m.Contains("rewatch status completed for 1 items", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A VIP account counts as paid too.
+    /// </summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task TreatsVipAsAPaidPlan()
+    {
+        _settings.TrackRewatches = true;
+        _plan = "vip";
+
+        await _processor.ProcessAsync([Finished("tt1")], Token);
+
+        Assert.Equal([true], _rewatchFlags);
+    }
+
+    /// <summary>
+    /// On a free account nothing carries allow_rewatch, which would make Simkl drop the whole write, and the plan is
+    /// read once until the cache expires.
+    /// </summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task SendsPlainWatchesOnAFreePlanAndCachesThePlan()
+    {
+        _settings.TrackRewatches = true;
+        _plan = "free";
+
+        await _processor.ProcessAsync([Finished("tt1")], Token);
+        await _processor.ProcessAsync([Finished("tt2")], Token);
+        _clock.Advance(MarkSyncProcessor.PlanCacheTime);
+        await _processor.ProcessAsync([Finished("tt3")], Token);
+
+        Assert.Equal([false, false, false], _rewatchFlags);
+        Assert.Equal(2, _planReads);
+        Assert.Contains(_logger.At(LogLevel.Information), m => m.Contains("on the Simkl free plan", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A plan that cannot be read counts as free and is read again next time.
+    /// </summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task RereadsAPlanItCouldNotRead()
+    {
+        _settings.TrackRewatches = true;
+        _plan = null;
+
+        await _processor.ProcessAsync([Finished("tt1")], Token);
+        await _processor.ProcessAsync([Finished("tt2")], Token);
+
+        Assert.Equal([false, false], _rewatchFlags);
+        Assert.Equal(2, _planReads);
+        Assert.Equal(2, _logger.At(LogLevel.Warning).Count(m => m.Contains("could not read the Simkl plan", StringComparison.Ordinal)));
+    }
+
+    /// <summary>
+    /// When Simkl answers pro_required, the plan has lapsed since it was read, so it is read again.
+    /// </summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task RereadsThePlanAfterProRequired()
+    {
+        _settings.TrackRewatches = true;
+        _plan = "pro";
+        _addResult = new(0, 0, 0, []) { RewatchStatuses = ["pro_required"] };
+
+        await _processor.ProcessAsync([Finished("tt1")], Token);
+        _plan = "free";
+        await _processor.ProcessAsync([Finished("tt2")], Token);
+
+        Assert.Equal([true, false], _rewatchFlags);
+        Assert.Equal(2, _planReads);
+    }
+
+    /// <summary>
+    /// A new Simkl login (another account) has its plan read afresh.
+    /// </summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task RereadsThePlanForANewLogin()
+    {
+        _settings.TrackRewatches = true;
+        _plan = "pro";
+
+        await _processor.ProcessAsync([Finished("tt1")], Token);
+        _user = new SimklUser("token-new", syncMovies: true, syncShows: true);
+        _plan = "free";
+        await _processor.ProcessAsync([Finished("tt2")], Token);
+
+        Assert.Equal([true, false], _rewatchFlags);
+        Assert.Equal(2, _planReads);
+    }
+
+    /// <summary>
+    /// Manual marks alone never need the plan.
+    /// </summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task ReadsNoPlanForManualMarksAlone()
+    {
+        _settings.TrackRewatches = true;
+
+        await _processor.ProcessAsync([Marks.Movie("tt1")], Token);
+
+        Assert.Equal([false], _rewatchFlags);
+        Assert.Equal(0, _planReads);
+    }
+
+    private static MarkChange Finished(string imdb) => Marks.Movie(imdb) with { FromPlayback = true };
 }

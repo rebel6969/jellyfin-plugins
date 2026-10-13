@@ -15,10 +15,11 @@ namespace Jellyfin.Plugin.SimklMarkSync.Simkl;
 /// Calls the Simkl API within its published limits.
 /// </summary>
 /// <remarks>
-/// Simkl allows one POST per second per client ID and per token, and treats bursts as abuse. Every call here is a
-/// POST, one at a time from the single <see cref="MarkSyncService"/> worker, at least <see cref="MinPostInterval"/>
-/// apart. All three calls are safe to repeat: Simkl ignores an add for an item already watched, and a repeated remove
-/// changes nothing. So a timeout, a 429 or a 5xx is retried; any other rejection is not.
+/// Simkl allows one POST per second per client ID and per token, and treats bursts as abuse. Every call here is made
+/// one at a time from the single <see cref="MarkSyncService"/> worker, at least <see cref="MinPostInterval"/> apart.
+/// All calls are safe to repeat: Simkl ignores an add for an item already watched (and a rewatch within two days of
+/// the last watch), a repeated remove changes nothing, and the plan read is a read. So a timeout, a 429 or a 5xx is
+/// retried; any other rejection is not.
 /// </remarks>
 public sealed class SimklClient : ISimklClient
 {
@@ -71,11 +72,45 @@ public sealed class SimklClient : ISimklClient
     }
 
     /// <inheritdoc />
-    public async Task<SimklWriteResult?> AddToHistoryAsync(HistoryRequest request, string clientId, SimklUser user, CancellationToken cancellationToken)
+    public async Task<SimklWriteResult?> AddToHistoryAsync(HistoryRequest request, string clientId, SimklUser user, bool allowRewatch, CancellationToken cancellationToken)
     {
         const string Path = "/sync/history";
-        var body = await PostAsync(Path, request, clientId, user, cancellationToken).ConfigureAwait(false);
+        var json = JsonSerializer.Serialize(request, SimklPayload.JsonOptions);
+        var body = await SendAsync(HttpMethod.Post, Path, json, allowRewatch ? "&allow_rewatch=yes" : string.Empty, clientId, user, cancellationToken).ConfigureAwait(false);
         return body is null ? null : ParseWriteResult(Path, body, "added");
+    }
+
+    /// <inheritdoc />
+    public async Task<string?> GetAccountTypeAsync(string clientId, SimklUser user, CancellationToken cancellationToken)
+    {
+        const string Path = "/users/settings";
+        var body = await SendAsync(HttpMethod.Get, Path, null, string.Empty, clientId, user, cancellationToken).ConfigureAwait(false);
+        if (body is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            if (document.RootElement.ValueKind == JsonValueKind.Object
+                && document.RootElement.TryGetProperty("account", out var account)
+                && account.ValueKind == JsonValueKind.Object
+                && account.TryGetProperty("type", out var type)
+                && type.ValueKind == JsonValueKind.String
+                && type.GetString() is { Length: > 0 } plan)
+            {
+                return plan;
+            }
+
+            _logger.LogError("Simkl {Path} answered without an account type: {Body}", Path, Truncate(body));
+            return null;
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogError("Simkl {Path} answered with invalid JSON ({Message}): {Body}", Path, ex.Message, Truncate(body));
+            return null;
+        }
     }
 
     /// <inheritdoc />
@@ -112,6 +147,33 @@ public sealed class SimklClient : ISimklClient
         return Truncate(item.GetRawText());
     }
 
+    // The add answer lists each item under statuses[].response; rewatch_status is there only for allow_rewatch=yes.
+    private static List<string> ReadRewatchStatuses(JsonElement counts)
+    {
+        var found = new List<string>();
+        if (counts.ValueKind != JsonValueKind.Object
+            || !counts.TryGetProperty("statuses", out var statuses)
+            || statuses.ValueKind != JsonValueKind.Array)
+        {
+            return found;
+        }
+
+        foreach (var status in statuses.EnumerateArray())
+        {
+            if (status.ValueKind == JsonValueKind.Object
+                && status.TryGetProperty("response", out var response)
+                && response.ValueKind == JsonValueKind.Object
+                && response.TryGetProperty("rewatch_status", out var rewatch)
+                && rewatch.ValueKind == JsonValueKind.String
+                && rewatch.GetString() is { Length: > 0 } value)
+            {
+                found.Add(value);
+            }
+        }
+
+        return found;
+    }
+
     private static int ReadCount(JsonElement counts, string name) =>
         counts.ValueKind == JsonValueKind.Object
         && counts.TryGetProperty(name, out var value)
@@ -120,19 +182,25 @@ public sealed class SimklClient : ISimklClient
             ? count
             : 0;
 
-    private async Task<string?> PostAsync<T>(string path, T body, string clientId, SimklUser user, CancellationToken cancellationToken)
+    private Task<string?> PostAsync<T>(string path, T body, string clientId, SimklUser user, CancellationToken cancellationToken) =>
+        SendAsync(HttpMethod.Post, path, JsonSerializer.Serialize(body, SimklPayload.JsonOptions), string.Empty, clientId, user, cancellationToken);
+
+    private async Task<string?> SendAsync(HttpMethod method, string path, string? json, string extraQuery, string clientId, SimklUser user, CancellationToken cancellationToken)
     {
-        var json = JsonSerializer.Serialize(body, SimklPayload.JsonOptions);
-        var uri = new Uri($"{BaseUrl}{path}?client_id={Uri.EscapeDataString(clientId)}&app-name={AppName}&app-version={_appVersion}");
+        var uri = new Uri($"{BaseUrl}{path}?client_id={Uri.EscapeDataString(clientId)}&app-name={AppName}&app-version={_appVersion}{extraQuery}");
         var client = _httpClientFactory.CreateClient(NamedClient.Default);
         for (var attempt = 1; ; attempt++)
         {
             await WaitForPostSlotAsync(cancellationToken).ConfigureAwait(false);
             string failure;
             TimeSpan? retryAfter = null;
-            using (var request = new HttpRequestMessage(HttpMethod.Post, uri))
+            using (var request = new HttpRequestMessage(method, uri))
             {
-                request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+                if (json is not null)
+                {
+                    request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+                }
+
                 request.Headers.UserAgent.ParseAdd($"{AppName}/{_appVersion}");
                 request.Headers.Accept.ParseAdd("application/json");
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", user.Token);
@@ -265,7 +333,10 @@ public sealed class SimklClient : ISimklClient
                 }
             }
 
-            return new SimklWriteResult(ReadCount(counts, "movies"), ReadCount(counts, "shows"), ReadCount(counts, "episodes"), notFound);
+            return new SimklWriteResult(ReadCount(counts, "movies"), ReadCount(counts, "shows"), ReadCount(counts, "episodes"), notFound)
+            {
+                RewatchStatuses = ReadRewatchStatuses(counts),
+            };
         }
         catch (JsonException ex)
         {

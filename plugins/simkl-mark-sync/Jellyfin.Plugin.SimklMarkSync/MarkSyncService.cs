@@ -4,18 +4,22 @@ using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.Session;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.SimklMarkSync;
 
 /// <summary>
-/// Listens for manual played and unplayed marks and sends them to Simkl in batches.
+/// Listens for manual played and unplayed marks, and for playbacks Jellyfin counts as finished, and sends them to
+/// Simkl in batches.
 /// </summary>
 /// <remarks>
-/// Jellyfin raises the event inside the request that saved the mark, so the handler only queues it. A single worker
+/// Jellyfin raises both events inside the request that caused them, so the handlers only queue a mark. A single worker
 /// waits until marks stop arriving for <see cref="QuietPeriod"/> (at most <see cref="MaxBatchDelay"/>), so marking a
-/// whole season, which saves each episode separately, goes to Simkl as one request.
+/// whole season, which saves each episode separately, goes to Simkl as one request. Finished playbacks are sent even
+/// though the official Simkl plugin scrobbles them too: on 2026-10-13 it missed one (a movie restarted seconds after
+/// a stop), and Simkl ignores a watch it already has.
 /// </remarks>
 public sealed class MarkSyncService : BackgroundService
 {
@@ -35,6 +39,7 @@ public sealed class MarkSyncService : BackgroundService
     public static readonly TimeSpan ShutdownSendTimeout = TimeSpan.FromSeconds(10);
 
     private readonly IUserDataManager _userDataManager;
+    private readonly ISessionManager _sessionManager;
     private readonly MarkSyncProcessor _processor;
     private readonly TimeProvider _time;
     private readonly ILogger<MarkSyncService> _logger;
@@ -44,12 +49,14 @@ public sealed class MarkSyncService : BackgroundService
     /// Initializes a new instance of the <see cref="MarkSyncService"/> class.
     /// </summary>
     /// <param name="userDataManager">The user data manager.</param>
+    /// <param name="sessionManager">The session manager, which reports finished playbacks.</param>
     /// <param name="processor">The processor that sends a batch.</param>
     /// <param name="time">The time provider.</param>
     /// <param name="logger">The logger.</param>
-    public MarkSyncService(IUserDataManager userDataManager, MarkSyncProcessor processor, TimeProvider time, ILogger<MarkSyncService> logger)
+    public MarkSyncService(IUserDataManager userDataManager, ISessionManager sessionManager, MarkSyncProcessor processor, TimeProvider time, ILogger<MarkSyncService> logger)
     {
         _userDataManager = userDataManager;
+        _sessionManager = sessionManager;
         _processor = processor;
         _time = time;
         _logger = logger;
@@ -62,6 +69,7 @@ public sealed class MarkSyncService : BackgroundService
         // This runs before the worker starts, so the credentials still have a single caller.
         _processor.LogReadiness();
         _userDataManager.UserDataSaved += OnUserDataSaved;
+        _sessionManager.PlaybackStopped += OnPlaybackStopped;
         return base.StartAsync(cancellationToken);
     }
 
@@ -69,6 +77,7 @@ public sealed class MarkSyncService : BackgroundService
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
         _userDataManager.UserDataSaved -= OnUserDataSaved;
+        _sessionManager.PlaybackStopped -= OnPlaybackStopped;
         await base.StopAsync(cancellationToken).ConfigureAwait(false);
     }
 
@@ -152,6 +161,33 @@ public sealed class MarkSyncService : BackgroundService
         {
             // This runs inside the request that saved the mark; an exception here would fail the user's mark.
             _logger.LogError(ex, "Could not queue a mark for Simkl: {Message}", ex.Message);
+        }
+    }
+
+    private void OnPlaybackStopped(object? sender, PlaybackStopEventArgs e)
+    {
+        try
+        {
+            // Jellyfin counts a playback as finished once it passes its "played" threshold (90% by default), the same
+            // point at which it marks the item played.
+            if (!e.PlayedToCompletion || e.Users is null)
+            {
+                return;
+            }
+
+            var finished = _time.GetUtcNow().UtcDateTime;
+            foreach (var user in e.Users)
+            {
+                var mark = MarkChangeFactory.CreateFromPlayback(e.Item, user.Id, static episode => episode.Series, finished, _logger);
+                if (mark is not null)
+                {
+                    _marks.Writer.TryWrite(mark);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Could not queue a finished playback for Simkl: {Message}", ex.Message);
         }
     }
 }

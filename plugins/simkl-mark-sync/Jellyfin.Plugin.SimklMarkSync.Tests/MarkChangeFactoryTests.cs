@@ -263,6 +263,62 @@ public sealed class MarkChangeFactoryTests
         Assert.Equal(Now, Create(Movie(), true, null)!.WatchedAtUtc);
     }
 
+    /// <summary>
+    /// A finished playback of a movie becomes a played mark from playback, dated when it finished.
+    /// </summary>
+    [Fact]
+    public void CapturesAFinishedMoviePlayback()
+    {
+        var movie = Movie();
+
+        var mark = Assert.IsType<MovieMark>(MarkChangeFactory.CreateFromPlayback(movie, Marks.User, _ => _series, Now, _logger));
+
+        Assert.True(mark.FromPlayback);
+        Assert.True(mark.Played);
+        Assert.Equal(Marks.User, mark.UserId);
+        Assert.Equal(movie.Id, mark.ItemId);
+        Assert.Equal(Now, mark.WatchedAtUtc);
+        Assert.Equal(new Dictionary<string, object> { ["imdb"] = "tt1375666", ["tmdb"] = "27205" }, mark.Ids);
+        Assert.Empty(_logger.Entries);
+    }
+
+    /// <summary>
+    /// A finished playback of an episode carries its series, season and number like a manual mark.
+    /// </summary>
+    [Fact]
+    public void CapturesAFinishedEpisodePlayback()
+    {
+        var mark = Assert.IsType<EpisodeMark>(MarkChangeFactory.CreateFromPlayback(Episode(3, 3), Marks.User, _ => _series, Now, _logger));
+
+        Assert.True(mark.FromPlayback);
+        Assert.Equal(3, mark.Season);
+        Assert.Equal([3], mark.Episodes);
+        Assert.Equal(_series.Id, mark.SeriesId);
+    }
+
+    /// <summary>
+    /// A manual mark is not from playback.
+    /// </summary>
+    [Fact]
+    public void MarksAManualMarkAsNotFromPlayback()
+    {
+        Assert.False(Assert.IsType<MovieMark>(Create(Movie(), played: true, Marks.WatchedAt)).FromPlayback);
+    }
+
+    /// <summary>
+    /// A finished playback with no item, or of a missing episode, is not sent.
+    /// </summary>
+    [Fact]
+    public void IgnoresAFinishedPlaybackWithNothingToSend()
+    {
+        var missing = Episode(1, 1);
+        missing.IsVirtualItem = true;
+
+        Assert.Null(MarkChangeFactory.CreateFromPlayback(null, Marks.User, _ => _series, Now, _logger));
+        Assert.Null(MarkChangeFactory.CreateFromPlayback(missing, Marks.User, _ => _series, Now, _logger));
+        Assert.Empty(_logger.Entries);
+    }
+
     private static Movie Movie() => new()
     {
         Id = Marks.ItemId("inception"),

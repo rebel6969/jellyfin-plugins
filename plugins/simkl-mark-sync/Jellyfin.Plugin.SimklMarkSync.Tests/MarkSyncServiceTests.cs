@@ -4,11 +4,13 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.SimklMarkSync.Simkl;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.Session;
 using MediaBrowser.Model.Entities;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -27,6 +29,7 @@ public sealed class MarkSyncServiceTests : IDisposable
 
     private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 10, 4, 3, 30, 0, TimeSpan.Zero));
     private readonly Mock<IUserDataManager> _userData = new();
+    private readonly Mock<ISessionManager> _sessions = new();
     private readonly Mock<ISimklCredentials> _credentials = new();
     private readonly Mock<ISimklClient> _client = new();
     private readonly ListLogger<MarkSyncService> _logger = new();
@@ -41,11 +44,11 @@ public sealed class MarkSyncServiceTests : IDisposable
         _credentials.Setup(c => c.GetClientId()).Returns("fixture-client-id");
         _credentials.Setup(c => c.GetUser(Marks.User)).Returns(new SimklUser("token-a", syncMovies: true, syncShows: true));
         _client
-            .Setup(c => c.AddToHistoryAsync(It.IsAny<HistoryRequest>(), It.IsAny<string>(), It.IsAny<SimklUser>(), It.IsAny<CancellationToken>()))
-            .Callback<HistoryRequest, string, SimklUser, CancellationToken>((request, _, _, _) => _added.Enqueue(request))
+            .Setup(c => c.AddToHistoryAsync(It.IsAny<HistoryRequest>(), It.IsAny<string>(), It.IsAny<SimklUser>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback<HistoryRequest, string, SimklUser, bool, CancellationToken>((request, _, _, _, _) => _added.Enqueue(request))
             .ReturnsAsync(new SimklWriteResult(0, 0, 0, []));
-        var processor = new MarkSyncProcessor(_credentials.Object, _client.Object, NullLogger<MarkSyncProcessor>.Instance);
-        _service = new MarkSyncService(_userData.Object, processor, _clock, _logger);
+        var processor = new MarkSyncProcessor(_credentials.Object, _client.Object, Mock.Of<IMarkSyncSettings>(), _clock, NullLogger<MarkSyncProcessor>.Instance);
+        _service = new MarkSyncService(_userData.Object, _sessions.Object, processor, _clock, _logger);
     }
 
     private static CancellationToken Token => TestContext.Current.CancellationToken;
@@ -199,6 +202,85 @@ public sealed class MarkSyncServiceTests : IDisposable
         Assert.Contains("Sending 1 marks to Simkl failed: settings unreadable", Assert.Single(_logger.At(LogLevel.Error)), StringComparison.Ordinal);
         Assert.Equal([1], BatchSizes);
     }
+
+    /// <summary>
+    /// A playback Jellyfin counts as finished reaches Simkl as a watch, for every user watching.
+    /// </summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task SendsAFinishedPlaybackForEveryUserWatching()
+    {
+        var other = new Guid("11111111-2222-3333-4444-555555555555");
+        _credentials.Setup(c => c.GetUser(other)).Returns(new SimklUser("token-b", syncMovies: true, syncShows: true));
+        await _service.StartAsync(Token);
+
+        RaiseStopped(Movie("tt27369017"), playedToCompletion: true, Marks.User, other);
+        await AdvanceUntil(() => _added.Count == 2, TimeSpan.FromSeconds(20));
+
+        Assert.All(_added, request => Assert.Equal("tt27369017", Assert.Single(request.Movies!).Ids["imdb"]));
+    }
+
+    /// <summary>
+    /// A playback stopped before Jellyfin's "played" point sends nothing; the official plugin keeps its progress.
+    /// </summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task IgnoresAPlaybackStoppedBeforeTheEnd()
+    {
+        await _service.StartAsync(Token);
+
+        RaiseStopped(Movie("tt1"), playedToCompletion: false, Marks.User);
+        await Advance(TimeSpan.FromSeconds(20));
+
+        Assert.Empty(_added);
+    }
+
+    /// <summary>
+    /// The playback listener is attached on start and detached on stop.
+    /// </summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task AttachesThePlaybackListenerOnlyWhileRunning()
+    {
+        await _service.StartAsync(Token);
+        _sessions.VerifyAdd(m => m.PlaybackStopped += It.IsAny<EventHandler<PlaybackStopEventArgs>>(), Times.Once);
+
+        await _service.StopAsync(Token);
+        _sessions.VerifyRemove(m => m.PlaybackStopped -= It.IsAny<EventHandler<PlaybackStopEventArgs>>(), Times.Once);
+    }
+
+    /// <summary>
+    /// A finished playback with no user list is skipped quietly, never thrown into the request that stopped playback.
+    /// </summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task SkipsAFinishedPlaybackWithNoUsers()
+    {
+        await _service.StartAsync(Token);
+        var args = new PlaybackStopEventArgs { PlayedToCompletion = true, Item = Movie("tt1"), Users = null! };
+
+        var exception = Record.Exception(() => _sessions.Raise(m => m.PlaybackStopped += null, args));
+        await Advance(TimeSpan.FromSeconds(20));
+
+        Assert.Null(exception);
+        Assert.Empty(_logger.At(LogLevel.Error));
+        Assert.Empty(_added);
+    }
+
+    private static Movie Movie(string imdb) => new()
+    {
+        Id = Marks.ItemId(imdb),
+        Name = imdb,
+        ProviderIds = new Dictionary<string, string> { ["Imdb"] = imdb },
+    };
+
+    private void RaiseStopped(BaseItem item, bool playedToCompletion, params Guid[] users) =>
+        _sessions.Raise(m => m.PlaybackStopped += null, new PlaybackStopEventArgs
+        {
+            Item = item,
+            PlayedToCompletion = playedToCompletion,
+            Users = [.. users.Select(id => new User("user-" + id, "Default", "Default") { Id = id })],
+        });
 
     private static UserDataSaveEventArgs MovieEvent(string imdb) => Event(new Movie
     {

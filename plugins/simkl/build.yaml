@@ -1,0 +1,22 @@
+---
+name: "Simkl"
+guid: "07CAEF58-A94B-4211-A62C-F9774E04EBDB"
+version: "9.1.0.0"
+targetAbi: "12.2.0.0"
+framework: "net10.0"
+owner: "crobibero"
+overview: "Scrobble to Simkl"
+description: >
+  Scrobble your watched Movies, TV Shows and Anime to Simkl and share your progress with friends!
+
+category: "General"
+artifacts:
+  - "Jellyfin.Plugin.Simkl.dll"
+changelog: |-
+  - 9.1.0.0 (rebel6969 build): a playback started again shortly after a stop is scrobbled; v9 ignored it and its final stop
+  - Unstable: Update to latest Jellyfin preview packages (#64) @crobibero, @jellyfin-bot
+  - Fix: typo 'compouter' in login instructions (#65) @bretthysuik
+  - feat: live-scrobbling support (#61) @samip5, @claude, @crobibero
+
+  ### New features and improvements ###
+  - Add external url provider (#39) @crobibero

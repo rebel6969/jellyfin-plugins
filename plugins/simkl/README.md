@@ -21,6 +21,9 @@ This build also listens to Jellyfin's playback start event. A start resets the s
 the item is still open (a client that reports a start again mid-playback causes no extra calls), and it also retries an
 item the plugin had given up on. A stop ignored for an already finished playback is now logged at debug level.
 
+The same change is offered upstream as
+[jellyfin/jellyfin-plugin-simkl#74](https://github.com/jellyfin/jellyfin-plugin-simkl/pull/74).
+
 Changed files: `Services/PlaybackScrobbler.cs` and `Services/SessionScrobbleTracker.cs`. New: the test project
 `Jellyfin.Plugin.Simkl.Tests` (upstream has none). It drives the scrobbler through Jellyfin's session events against a
 fake Simkl in real time (the plugin spaces calls 5 s apart, so the four tests take about 45 s). Unmodified upstream `v9`

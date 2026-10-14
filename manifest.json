@@ -94,5 +94,23 @@
         "timestamp": "2026-10-13T13:14:17.0000000Z"
       }
     ]
+  },
+  {
+    "guid": "c63652fb-8ecd-4791-928b-d769b21b8b08",
+    "name": "Episode Titles",
+    "description": "Replaces placeholder episode names (Episode 3, TBA, the file name) with the first real title from the library's metadata providers, and re-checks them until one arrives.",
+    "overview": "Replaces placeholder episode names (Episode 3, TBA, the file name) with the first real title from the library's metadata providers, and re-checks them until one arrives.",
+    "owner": "rebel6969",
+    "category": "Metadata",
+    "versions": [
+      {
+        "version": "1.0.0.0",
+        "targetAbi": "12.1.0.0",
+        "changelog": "First release: after an episode's metadata refresh, a placeholder name gives way to the first real title among the library's providers in their order; a daily task re-checks placeholder-named episodes so titles that arrive after import replace them.",
+        "sourceUrl": "https://github.com/rebel6969/jellyfin-plugins/releases/download/episode-titles-v1.0.0.0/episode-titles-1.0.0.0.zip",
+        "checksum": "49db7b63dddb127a6539fce623c24e51",
+        "timestamp": "2026-10-14T18:17:20.704288+00:00"
+      }
+    ]
   }
 ]

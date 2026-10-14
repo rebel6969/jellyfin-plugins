@@ -20,7 +20,8 @@ attached to a release of this repository, and the manifest carries its MD5 check
 | **Max Quality** | Direct plays every video at its original quality; a quality you pick during playback is respected for that video | 1.0.1.0 | [`plugins/max-quality`](plugins/max-quality) | GPL-3.0 |
 | **Simkl Mark Sync** | Sends movies and episodes you mark played or unplayed, and every playback Jellyfin counts as finished, to Simkl (rewatches on Simkl PRO), using the official Simkl plugin's login | 1.1.0.0 | [`plugins/simkl-mark-sync`](plugins/simkl-mark-sync) | GPL-3.0 |
 | **Simkl** (official, patched) | The official Simkl scrobbler v9 with one fix: a playback started again shortly after a stop is scrobbled. Same plugin ID, so it installs over 9.0.0.0 | 9.1.0.0 | [`plugins/simkl`](plugins/simkl) | GPL-3.0 |
-| **English SDH Preference** | Opt-in: selects English SDH/HI/CC subtitles when present, otherwise full English; audio untouched | 1.0.0.1 | [`plugins/english-sdh`](plugins/english-sdh) | MIT |
+| **English SDH Preference** | Opt-in: selects English SDH/HI/CC subtitles when present, otherwise full English; a play request naming tracks the file does not have starts on the default audio and the English choice | 1.1.0.0 | [`plugins/english-sdh`](plugins/english-sdh) | MIT |
+| **Episode Titles** | Replaces placeholder episode names ("Episode 3", "TBA", the file name) with the first real title among the library's own metadata providers, and re-checks them daily until one arrives | 1.0.0.0 | [`plugins/episode-titles`](plugins/episode-titles) | MIT |
 
 Each folder has its own README (behaviour, settings, how to check it is active), its source, tests and license.
 

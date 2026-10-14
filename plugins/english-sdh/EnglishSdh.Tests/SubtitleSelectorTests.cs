@@ -6,10 +6,14 @@ public class SubtitleSelectorTests
 {
     internal static MediaStream Sub(int index, string language = "eng", string? title = null,
         bool hearing = false, bool forced = false) => new()
-    {
-        Index = index, Type = MediaStreamType.Subtitle, Language = language,
-        Title = title, IsHearingImpaired = hearing, IsForced = forced
-    };
+        {
+            Index = index,
+            Type = MediaStreamType.Subtitle,
+            Language = language,
+            Title = title,
+            IsHearingImpaired = hearing,
+            IsForced = forced
+        };
 
     [Theory]
     [InlineData("English SDH")]

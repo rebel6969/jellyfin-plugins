@@ -20,22 +20,29 @@ public sealed class PlaybackHandler : IEventConsumer<PlaybackStartEventArgs>, IE
     private readonly IHostApplicationLifetime _lifetime;
     private readonly Func<PluginConfiguration?> _configuration;
     private readonly TimeSpan _settleDelay;
+    private readonly TimeProvider _time;
 
     public PlaybackHandler(ISessionManager sessions, IMediaSourceManager sources,
         ILogger<PlaybackHandler> logger, IHostApplicationLifetime lifetime,
-        Func<PluginConfiguration?> configuration, TimeSpan? settleDelay = null)
+        Func<PluginConfiguration?> configuration, TimeSpan? settleDelay = null, TimeProvider? time = null)
     {
         _sessions = sessions; _sources = sources; _logger = logger;
         _lifetime = lifetime; _configuration = configuration;
         _settleDelay = settleDelay ?? TimeSpan.FromMilliseconds(1500);
+        _time = time ?? TimeProvider.System;
     }
 
-    private bool EnabledFor(Guid userId)
-    {
-        var config = _configuration();
-        return userId != Guid.Empty && config?.Enabled == true
-            && (config.UserIds ?? []).Any(s => Guid.TryParse(s, out var id) && id == userId);
-    }
+    private bool EnabledFor(Guid userId) => OptIn.EnabledFor(_configuration(), userId);
+
+    /// <summary>
+    /// True for a connected session that has reported no capabilities to this server process. Jellyfin keeps
+    /// capabilities only in memory, and web-based clients report them once at sign-in, so after a server restart
+    /// such a client still handles commands while its session lists none (Jellium Desktop, 2026-10-14). A client
+    /// that reported capabilities without this command is still skipped.
+    /// </summary>
+    public static bool CapabilitiesUnreported(SessionInfo session) =>
+        session.SupportedCommands.Count == 0 && session.PlayableMediaTypes.Count == 0
+        && session.SessionControllers.Any(c => c.IsSessionActive);
 
     public async Task OnEvent(PlaybackStartEventArgs args)
     {
@@ -66,7 +73,7 @@ public sealed class PlaybackHandler : IEventConsumer<PlaybackStartEventArgs>, IE
         {
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.ApplicationStopping);
             deadline.CancelAfter(TimeSpan.FromSeconds(10));
-            await Task.Delay(_settleDelay, deadline.Token).ConfigureAwait(false);
+            await Task.Delay(_settleDelay, _time, deadline.Token).ConfigureAwait(false);
             if (!_plays.TryGetValue(sessionId, out var current) || !ReferenceEquals(current, pending)) return;
             session = _sessions.Sessions.FirstOrDefault(s => s.Id == sessionId);
             if (session is null || !EnabledFor(pending.UserId) || session.UserId != pending.UserId
@@ -83,8 +90,13 @@ public sealed class PlaybackHandler : IEventConsumer<PlaybackStartEventArgs>, IE
             }
             if (!session.SupportedCommands.Contains(GeneralCommandType.SetSubtitleStreamIndex))
             {
-                _logger.LogWarning("EnglishSdh skipped client {Client}: SetSubtitleStreamIndex not advertised", session.Client);
-                return;
+                if (!CapabilitiesUnreported(session))
+                {
+                    _logger.LogWarning("EnglishSdh skipped client {Client}: SetSubtitleStreamIndex not advertised", session.Client);
+                    return;
+                }
+                _logger.LogInformation("EnglishSdh: client {Client} has reported no capabilities since Jellyfin started; sending over its live connection",
+                    session.Client);
             }
 
             // Resolve exactly the reported source; do not guess indices from another version.

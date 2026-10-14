@@ -16,7 +16,8 @@ public sealed class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
     public static Plugin? Instance { get; private set; }
     public Plugin(IApplicationPaths paths, IXmlSerializer serializer) : base(paths, serializer) => Instance = this;
     public override string Name => "English SDH Preference";
-    public override string Description => "Prefer English SDH subtitles for opted-in users; never change audio.";
+    public override string Description =>
+        "Prefer English SDH subtitles for opted-in users; audio is reset only when a play request names a track the file does not have.";
     public override Guid Id => PluginId;
     public IEnumerable<PluginPageInfo> GetPages() =>
         [new() { Name = "EnglishSdh", EmbeddedResourcePath = "Jellyfin.Plugin.EnglishSdh.config.html" }];

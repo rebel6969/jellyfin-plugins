@@ -2,11 +2,19 @@
   {
     "guid": "36dab5c5-2396-4b09-9c63-a46c56288c68",
     "name": "English SDH Preference",
-    "description": "Opt-in English SDH subtitle preference; audio untouched.",
-    "overview": "Opt-in English SDH subtitle preference; audio untouched.",
+    "description": "Opt-in English SDH subtitle preference; drops play-request track numbers the file does not have.",
+    "overview": "Opt-in English SDH subtitle preference; drops play-request track numbers the file does not have.",
     "owner": "rebel6969",
     "category": "General",
     "versions": [
+      {
+        "version": "1.1.0.0",
+        "targetAbi": "12.1.0.0",
+        "changelog": "Play requests whose audio or subtitle index does not exist in the file (an item page left open while the file was replaced) start on the default audio and the English choice; clients that lost their capabilities in a server restart still get the subtitle command; settle-delay tests run on a fake clock.",
+        "sourceUrl": "https://github.com/rebel6969/jellyfin-plugins/releases/download/english-sdh-v1.1.0.0/english-sdh-1.1.0.0.zip",
+        "checksum": "0dd06cadf9834a6ec9edc1672ee47f5f",
+        "timestamp": "2026-10-14T14:56:56.702711+00:00"
+      },
       {
         "version": "1.0.0.1",
         "targetAbi": "12.1.0.0",

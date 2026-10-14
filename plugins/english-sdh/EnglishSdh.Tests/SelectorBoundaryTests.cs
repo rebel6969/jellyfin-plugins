@@ -6,12 +6,20 @@ using static SubtitleSelectorTests;
 public class SelectorBoundaryTests
 {
     [Theory]
-    [InlineData("en")][InlineData("eng")][InlineData("EN")][InlineData("English")][InlineData(" eng ")]
+    [InlineData("en")]
+    [InlineData("eng")]
+    [InlineData("EN")]
+    [InlineData("English")]
+    [InlineData(" eng ")]
     public void MatchesEnglishCodes(string language) => Assert.Equal(2, SubtitleSelector.Select([Sub(2, language)]));
 
     [Theory]
-    [InlineData("non-SDH")][InlineData("No CC")][InlineData("not hearing impaired")]
-    [InlineData("without closed captions")][InlineData("Hindi")][InlineData("sdhish")]
+    [InlineData("non-SDH")]
+    [InlineData("No CC")]
+    [InlineData("not hearing impaired")]
+    [InlineData("without closed captions")]
+    [InlineData("Hindi")]
+    [InlineData("sdhish")]
     public void AvoidsFalseSdhLabels(string title) => Assert.False(SubtitleSelector.IsSdh(Sub(2, title: title)));
 
     [Fact]

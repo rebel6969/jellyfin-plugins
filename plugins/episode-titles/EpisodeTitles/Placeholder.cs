@@ -5,9 +5,10 @@ namespace Jellyfin.Plugin.EpisodeTitles;
 /// <summary>Names an episode carries while its real title is not known yet.</summary>
 public static partial class Placeholder
 {
-    // AniDB's English stand-in for an untitled episode ("Episode 3"), which TheTVDB and TMDB also list, and
-    // TheTVDB's "TBA"/"TBD". A title that only starts with these words ("Episode 6.5 ...") is a real one.
-    [GeneratedRegex(@"^(?:Episode\s+\d+|TBA|TBD)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    // AniDB's English stand-in for an untitled episode ("Episode 3"), which TheTVDB and TMDB also list; IMDb's, which
+    // OMDb passes on ("Episode #1.3", season and episode); and TheTVDB's "TBA"/"TBD". A title that only starts with
+    // these words ("Episode 6.5 ...") is a real one.
+    [GeneratedRegex(@"^(?:Episode\s+(?:\d+|#\d+\.\d+)|TBA|TBD)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex StandIn();
 
     /// <summary>True when <paramref name="name"/> is empty, a stand-in, or the file name Jellyfin keeps when no

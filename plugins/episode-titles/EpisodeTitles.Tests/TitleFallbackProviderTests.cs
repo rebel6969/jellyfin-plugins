@@ -140,6 +140,22 @@ public class TitleFallbackProviderTests
         Assert.All(new[] { anidb, tvdb, tmdb, omdb }, p => Assert.Single(p.Calls));
     }
 
+    // Production, 2026-10-14: an untitled drama episode named "Episode 1" by TheTVDB was renamed "Episode #1.1",
+    // IMDb's stand-in passed on by OMDb, when that form did not count as a placeholder.
+    [Fact]
+    public async Task ImdbsStandInFromOmdbDoesNotReplaceAnotherStandIn()
+    {
+        var tvdb = new FakeProvider("TheTVDB", "Episode 1");
+        var omdb = new FakeProvider("The Open Movie Database", "Episode #1.1");
+        var tmdb = new FakeProvider("TheMovieDb", "Episode 1");
+        var episode = JellyfinStatics.Episode("Episode 1");
+
+        var update = await Fetch(Provider(tvdb, omdb, tmdb), episode);
+
+        Assert.Equal(ItemUpdateType.None, update);
+        Assert.Equal("Episode 1", episode.Name);
+    }
+
     [Fact]
     public async Task AResultWithoutMetadataIsIgnoredEvenIfItCarriesAName()
     {

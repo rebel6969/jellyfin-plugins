@@ -104,6 +104,14 @@
     "category": "Metadata",
     "versions": [
       {
+        "version": "1.0.1.0",
+        "targetAbi": "12.1.0.0",
+        "changelog": "IMDb's stand-in title, passed on by OMDb as \"Episode #1.3\", counts as a placeholder: in 1.0.0.0 it replaced TheTVDB's \"Episode 3\" on episodes that have no title anywhere.",
+        "sourceUrl": "https://github.com/rebel6969/jellyfin-plugins/releases/download/episode-titles-v1.0.1.0/episode-titles-1.0.1.0.zip",
+        "checksum": "58bd337eaa04622027c703c12fc3f4f1",
+        "timestamp": "2026-10-14T18:31:54.108680+00:00"
+      },
+      {
         "version": "1.0.0.0",
         "targetAbi": "12.1.0.0",
         "changelog": "First release: after an episode's metadata refresh, a placeholder name gives way to the first real title among the library's providers in their order; a daily task re-checks placeholder-named episodes so titles that arrive after import replace them.",

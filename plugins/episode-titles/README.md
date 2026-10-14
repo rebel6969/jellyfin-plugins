@@ -25,9 +25,9 @@ had real titles, and 17 of the files had been imported while TheTVDB still said 
 - **After every metadata refresh of an episode** (a new file, *Refresh metadata*, any full refresh), if the name is a
   placeholder, the library's remote episode providers are asked again, in the library's order, and the first real
   title is kept. A real name is never replaced, so AniDB's titles still win where AniDB is first and has one.
-- **Placeholders**: empty; `Episode <number>`; `TBA`; `TBD` (case-insensitive, surrounding spaces ignored); or exactly
-  the file name without its extension. A title that only starts with those words ("Episode 6.5 ...",
-  "Episode 3: The Return") is a real title.
+- **Placeholders**: empty; `Episode <number>` (AniDB, TheTVDB, TMDB); `Episode #<season>.<episode>` (IMDb's, passed on
+  by OMDb); `TBA`; `TBD` (case-insensitive, surrounding spaces ignored); or exactly the file name without its
+  extension. A title that only starts with those words ("Episode 6.5 ...", "Episode 3: The Return") is a real title.
 - **Locks**: an item that is locked, or whose Name field is locked, is left alone.
 - **Re-check task** (Dashboard > Scheduled Tasks > Episode Titles > *Re-check placeholder episode titles*, daily by
   default): refreshes placeholder-named episodes that have a file, so late titles arrive. Each episode is re-checked
@@ -73,6 +73,14 @@ dotnet build EpisodeTitles/EpisodeTitles.csproj -c Release -p:ContinuousIntegrat
     "The Hopeless Battle Against the Undead King" (AniDB says "Episode 4");
   - S02E01 set to its production state ("Episode 1", last refreshed 3 days ago) is left alone by the library scan and
     renamed "The Floating Island" by the re-check task, which found exactly that one episode due.
+
+## Versions
+
+- **1.0.1.0** (2026-10-15): IMDb's stand-in `Episode #1.3`, which OMDb passes on, counts as a placeholder. In 1.0.0.0
+  it counted as a real title, so on the author's server the first re-check renamed 48 untitled drama episodes from
+  TheTVDB's "Episode 3" to "Episode #1.3". A test reproduces the case and fails on
+  1.0.0.0's rule (4 tests fail on the old rule, 69 pass on the new one).
+- **1.0.0.0** (2026-10-14): first release.
 
 ## Rollback
 

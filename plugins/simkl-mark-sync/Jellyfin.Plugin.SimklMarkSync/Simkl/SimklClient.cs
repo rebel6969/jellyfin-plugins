@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
@@ -132,6 +133,35 @@ public sealed class SimklClient : ISimklClient
         return body is null ? null : ParseWatched(Path, body);
     }
 
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<int>?> FindAnimeAsync(string idName, string idValue, string clientId, SimklUser user, CancellationToken cancellationToken)
+    {
+        const string Path = "/search/id";
+        ArgumentException.ThrowIfNullOrWhiteSpace(idName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(idValue);
+        var query = $"&{Uri.EscapeDataString(idName)}={Uri.EscapeDataString(idValue)}";
+        var body = await SendAsync(HttpMethod.Get, Path, null, query, clientId, user, cancellationToken).ConfigureAwait(false);
+        return body is null ? null : ReadJson(Path, body, ParseAnimeIds);
+    }
+
+    /// <inheritdoc />
+    public async Task<AnimeTitle?> GetAnimeAsync(int simklId, string clientId, SimklUser user, CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(simklId);
+        var path = string.Create(CultureInfo.InvariantCulture, $"/anime/{simklId}");
+        var body = await SendAsync(HttpMethod.Get, path, null, "&extended=full", clientId, user, cancellationToken).ConfigureAwait(false);
+        return body is null ? null : ReadJson(path, body, root => ParseAnimeTitle(root, simklId));
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<AnimeEpisode>?> GetAnimeEpisodesAsync(int simklId, string clientId, SimklUser user, CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(simklId);
+        var path = string.Create(CultureInfo.InvariantCulture, $"/anime/episodes/{simklId}");
+        var body = await SendAsync(HttpMethod.Get, path, null, "&extended=full", clientId, user, cancellationToken).ConfigureAwait(false);
+        return body is null ? null : ReadJson(path, body, ParseAnimeEpisodes);
+    }
+
     private static string Truncate(string text) =>
         text.Length <= MaxLoggedBodyLength ? text : string.Concat(text.AsSpan(0, MaxLoggedBodyLength), "…");
 
@@ -181,6 +211,141 @@ public sealed class SimklClient : ISimklClient
         && value.TryGetInt32(out var count)
             ? count
             : 0;
+
+    // A whole-number field, or null when it is missing or not a whole number.
+    private static int? ReadInt(JsonElement item, string name) =>
+        item.ValueKind == JsonValueKind.Object
+        && item.TryGetProperty(name, out var value)
+        && value.ValueKind == JsonValueKind.Number
+        && value.TryGetInt32(out var number)
+            ? number
+            : null;
+
+    // An ID as text: Simkl sends most IDs as strings and its own as numbers.
+    private static string? ReadIdText(JsonElement value) => value.ValueKind switch
+    {
+        JsonValueKind.String => value.GetString() is { Length: > 0 } text ? text : null,
+        JsonValueKind.Number => value.GetRawText(),
+        _ => null,
+    };
+
+    private static Dictionary<string, string>? ReadIds(JsonElement item)
+    {
+        if (item.ValueKind != JsonValueKind.Object
+            || !item.TryGetProperty("ids", out var ids)
+            || ids.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        var found = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var id in ids.EnumerateObject())
+        {
+            if (ReadIdText(id.Value) is string text)
+            {
+                found[id.Name] = text;
+            }
+        }
+
+        return found;
+    }
+
+    private static List<int>? ParseAnimeIds(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        var ids = new List<int>();
+        foreach (var item in root.EnumerateArray())
+        {
+            if (item.ValueKind == JsonValueKind.Object
+                && item.TryGetProperty("type", out var type)
+                && type.ValueKind == JsonValueKind.String
+                && string.Equals(type.GetString(), "anime", StringComparison.Ordinal)
+                && item.TryGetProperty("ids", out var itemIds)
+                && ReadInt(itemIds, "simkl") is int simklId
+                && simklId > 0)
+            {
+                ids.Add(simklId);
+            }
+        }
+
+        return ids;
+    }
+
+    // The answer must describe the title asked for, or its episodes could be placed on another title.
+    private static AnimeTitle? ParseAnimeTitle(JsonElement root, int simklId)
+    {
+        if (root.ValueKind != JsonValueKind.Object
+            || !root.TryGetProperty("ids", out var ids)
+            || ReadInt(ids, "simkl") != simklId)
+        {
+            return null;
+        }
+
+        var seasons = new List<int>();
+        if (root.TryGetProperty("mapped_tvdb_seasons", out var mapped) && mapped.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var season in mapped.EnumerateArray())
+            {
+                if (season.ValueKind == JsonValueKind.Number && season.TryGetInt32(out var number))
+                {
+                    seasons.Add(number);
+                }
+            }
+        }
+
+        var relations = new List<AnimeRelation>();
+        if (root.TryGetProperty("relations", out var related) && related.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var relation in related.EnumerateArray())
+            {
+                if (relation.ValueKind == JsonValueKind.Object
+                    && relation.TryGetProperty("ids", out var relationIds)
+                    && ReadInt(relationIds, "simkl") is int relatedId
+                    && relatedId > 0)
+                {
+                    var tvdb = relationIds.TryGetProperty("tvdb", out var tvdbValue) ? ReadIdText(tvdbValue) : null;
+                    relations.Add(new AnimeRelation(relatedId, tvdb));
+                }
+            }
+        }
+
+        return new AnimeTitle(simklId, seasons, relations);
+    }
+
+    private static List<AnimeEpisode>? ParseAnimeEpisodes(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        var episodes = new List<AnimeEpisode>();
+        foreach (var item in root.EnumerateArray())
+        {
+            // Specials carry no episode number, so they are never placed.
+            if (ReadInt(item, "episode") is not int number || number <= 0)
+            {
+                continue;
+            }
+
+            var isEpisode = item.TryGetProperty("type", out var type)
+                && type.ValueKind == JsonValueKind.String
+                && string.Equals(type.GetString(), "episode", StringComparison.Ordinal);
+            DateTimeOffset? aired = item.TryGetProperty("date", out var date)
+                && date.ValueKind == JsonValueKind.String
+                && DateTimeOffset.TryParse(date.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed)
+                    ? parsed
+                    : null;
+            var tvdb = item.TryGetProperty("tvdb", out var coordinate) ? coordinate : default;
+            episodes.Add(new AnimeEpisode(number, isEpisode, aired, ReadInt(tvdb, "season"), ReadInt(tvdb, "episode")));
+        }
+
+        return episodes;
+    }
 
     private Task<string?> PostAsync<T>(string path, T body, string clientId, SimklUser user, CancellationToken cancellationToken) =>
         SendAsync(HttpMethod.Post, path, JsonSerializer.Serialize(body, SimklPayload.JsonOptions), string.Empty, clientId, user, cancellationToken);
@@ -319,6 +484,7 @@ public sealed class SimklClient : ISimklClient
 
             var counts = root.TryGetProperty(countsName, out var found) ? found : default;
             var notFound = new List<string>();
+            var unmatchedShows = new List<UnmatchedShow>();
             if (root.TryGetProperty("not_found", out var missing) && missing.ValueKind == JsonValueKind.Object)
             {
                 foreach (var bucket in missing.EnumerateObject())
@@ -327,7 +493,14 @@ public sealed class SimklClient : ISimklClient
                     {
                         foreach (var item in bucket.Value.EnumerateArray())
                         {
-                            notFound.Add(Describe(item));
+                            var description = Describe(item);
+                            notFound.Add(description);
+
+                            // Simkl lists anime it could not place under "shows" too, echoing the IDs as sent.
+                            if (string.Equals(bucket.Name, "shows", StringComparison.Ordinal) && ReadIds(item) is { Count: > 0 } ids)
+                            {
+                                unmatchedShows.Add(new UnmatchedShow(description, ids));
+                            }
                         }
                     }
                 }
@@ -336,7 +509,30 @@ public sealed class SimklClient : ISimklClient
             return new SimklWriteResult(ReadCount(counts, "movies"), ReadCount(counts, "shows"), ReadCount(counts, "episodes"), notFound)
             {
                 RewatchStatuses = ReadRewatchStatuses(counts),
+                NotFoundShows = unmatchedShows,
             };
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogError("Simkl {Path} answered with invalid JSON ({Message}): {Body}", path, ex.Message, Truncate(body));
+            return null;
+        }
+    }
+
+    // Reads a catalogue answer; the reader returns null for a shape it cannot use, which is logged here.
+    private T? ReadJson<T>(string path, string body, Func<JsonElement, T?> read)
+        where T : class
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            var value = read(document.RootElement);
+            if (value is null)
+            {
+                _logger.LogError("Simkl {Path} answered with unexpected JSON: {Body}", path, Truncate(body));
+            }
+
+            return value;
         }
         catch (JsonException ex)
         {

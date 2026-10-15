@@ -59,6 +59,49 @@ public static class SimklPayload
     }
 
     /// <summary>
+    /// Builds the body that sends episodes placed in Simkl's catalogue, addressed by Simkl's own title IDs and episode
+    /// numbers.
+    /// </summary>
+    /// <remarks>
+    /// The Simkl ID alone, with no title, year or shared TVDB ID, so Simkl cannot route the write to another title.
+    /// Simkl numbers an anime title's episodes from 1 in a single season (AniDB order), so <c>use_tvdb_anime_seasons</c>
+    /// is off. A removal still names each episode.
+    /// </remarks>
+    /// <param name="placements">The episodes; any that were not placed are left out.</param>
+    /// <param name="adding">Whether the episodes are marked watched, with their watch times, or unmarked.</param>
+    /// <returns>The request.</returns>
+    public static HistoryRequest BuildCatalogWrite(IReadOnlyCollection<EpisodePlacement> placements, bool adding)
+    {
+        ArgumentNullException.ThrowIfNull(placements);
+        var shows = placements
+            .Where(p => p.IsPlaced)
+            .GroupBy(p => p.SimklId)
+            .OrderBy(title => title.Key)
+            .Select(title => new HistoryShow(
+                new Dictionary<string, object>(StringComparer.Ordinal) { ["simkl"] = title.Key },
+                null,
+                null,
+                UseTvdbAnimeSeasons: false,
+                [
+                    new HistorySeason(
+                        1,
+                        title
+                            .GroupBy(p => p.SimklEpisode)
+                            .OrderBy(episode => episode.Key)
+                            .Select(episode => new HistoryEpisode(episode.Key, adding ? ToIso(episode.Max(p => p.Mark.WatchedAtUtc)) : null))
+                            .ToList()),
+                ]))
+            .ToList();
+        var request = new HistoryRequest(null, NullIfEmpty(shows));
+        if (!adding)
+        {
+            EnsureNoWholeShowRemoval(request);
+        }
+
+        return request;
+    }
+
+    /// <summary>
     /// Builds the lookup that asks Simkl whether each movie is in the user's library.
     /// </summary>
     /// <param name="movies">The movies.</param>

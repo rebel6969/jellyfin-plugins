@@ -16,4 +16,9 @@ public sealed record SimklWriteResult(int Movies, int Shows, int Episodes, IRead
     /// example <c>completed</c> for a recorded movie rewatch or <c>too_soon</c> within two days of the last watch.
     /// </summary>
     public IReadOnlyList<string> RewatchStatuses { get; init; } = [];
+
+    /// <summary>
+    /// Gets the shows Simkl could not match, with the IDs each was sent with.
+    /// </summary>
+    public IReadOnlyList<UnmatchedShow> NotFoundShows { get; init; } = [];
 }

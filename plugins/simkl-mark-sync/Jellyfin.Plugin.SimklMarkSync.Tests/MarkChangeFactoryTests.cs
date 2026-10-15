@@ -73,6 +73,21 @@ public sealed class MarkChangeFactoryTests
         Assert.Equal(2010, mark.ShowYear);
         Assert.Equal(2, mark.Season);
         Assert.Equal([5], mark.Episodes);
+        Assert.Null(mark.PremiereDate);
+    }
+
+    /// <summary>
+    /// An episode's premiere date travels with its mark, to confirm a placement in Simkl's catalogue.
+    /// </summary>
+    [Fact]
+    public void CapturesAnEpisodesPremiereDate()
+    {
+        var episode = Episode(season: 2, number: 2);
+        episode.PremiereDate = new DateTime(2026, 10, 15, 0, 0, 0, DateTimeKind.Utc);
+
+        var mark = Assert.IsType<EpisodeMark>(Create(episode, played: true, Marks.WatchedAt));
+
+        Assert.Equal(episode.PremiereDate, mark.PremiereDate);
     }
 
     /// <summary>

@@ -27,4 +27,10 @@ public sealed record EpisodeMark(
     int? ShowYear,
     int Season,
     IReadOnlyList<int> Episodes)
-    : MarkChange(UserId, ItemId, Played, WatchedAtUtc);
+    : MarkChange(UserId, ItemId, Played, WatchedAtUtc)
+{
+    /// <summary>
+    /// Gets the date the episode first aired, as Jellyfin has it; Simkl's air date confirms an episode placed by order.
+    /// </summary>
+    public DateTime? PremiereDate { get; init; }
+}

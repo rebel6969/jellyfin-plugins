@@ -551,6 +551,140 @@ public sealed class SimklClientTests : IDisposable
         Assert.Null(await Run(() => _client.GetAccountTypeAsync(ClientId, User, Token)));
     }
 
+    /// <summary>
+    /// The anime search is a GET of /search/id with the external ID, and keeps only anime with a Simkl ID.
+    /// </summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task FindsAnimeByAnExternalId()
+    {
+        _handler.Enqueue(Reply(
+            HttpStatusCode.OK,
+            """[{"type":"anime","ids":{"simkl":2125698}},{"type":"tv","ids":{"simkl":5}},{"type":"anime","ids":{"simkl":0}},{"type":"anime"},7]"""));
+
+        var found = await Run(() => _client.FindAnimeAsync("tvdb", "432815", ClientId, User, Token));
+
+        Assert.Equal([2125698], found);
+        var sent = Assert.Single(_handler.Requests);
+        Assert.Equal(HttpMethod.Get, sent.Method);
+        Assert.Equal("/search/id", sent.Uri.AbsolutePath);
+        Assert.EndsWith("&tvdb=432815", sent.Uri.Query, StringComparison.Ordinal);
+        Assert.Null(sent.Body);
+    }
+
+    /// <summary>
+    /// Simkl's real answer for the series' TVDB ID names its first-season title.
+    /// </summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task FindsTheRealFirstSeasonTitle()
+    {
+        _handler.Enqueue(Reply(HttpStatusCode.OK, Fixtures.Read("simkl-search-id-tvdb-432815.json")));
+
+        Assert.Equal([2125698], await Run(() => _client.FindAnimeAsync("tvdb", "432815", ClientId, User, Token)));
+    }
+
+    /// <summary>
+    /// A search answer that is not a list gives nothing and says why.
+    /// </summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task FindsNothingInAnUnusableSearchAnswer()
+    {
+        _handler.Enqueue(Reply(HttpStatusCode.OK, """{"error":"id_err"}"""));
+
+        Assert.Null(await Run(() => _client.FindAnimeAsync("tvdb", "432815", ClientId, User, Token)));
+        Assert.Single(_logger.At(LogLevel.Error));
+    }
+
+    /// <summary>
+    /// Simkl's real answer for the season-2 title gives its TVDB season and its relation to season 1.
+    /// </summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task ReadsTheRealSeasonTwoTitle()
+    {
+        _handler.Enqueue(Reply(HttpStatusCode.OK, Fixtures.Read("simkl-anime-2330432.json")));
+
+        var title = await Run(() => _client.GetAnimeAsync(2330432, ClientId, User, Token));
+
+        Assert.NotNull(title);
+        Assert.Equal(2330432, title.SimklId);
+        Assert.Equal([2], title.MappedTvdbSeasons);
+        Assert.Equal([new AnimeRelation(2125698, "432815")], title.Relations);
+        var sent = Assert.Single(_handler.Requests);
+        Assert.Equal("/anime/2330432", sent.Uri.AbsolutePath);
+        Assert.EndsWith("&extended=full", sent.Uri.Query, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// An answer describing another title than the one asked for gives no title.
+    /// </summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task RefusesAnAnswerForAnotherTitle()
+    {
+        _handler.Enqueue(Reply(HttpStatusCode.OK, Fixtures.Read("simkl-anime-2125698.json")));
+
+        Assert.Null(await Run(() => _client.GetAnimeAsync(2330432, ClientId, User, Token)));
+        Assert.Single(_logger.At(LogLevel.Error));
+    }
+
+    /// <summary>
+    /// Simkl's real episode list for the season-2 title: episode 2 aired 2026-10-15 in Japan, filed under TVDB S1E2.
+    /// </summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task ReadsTheRealSeasonTwoEpisodes()
+    {
+        _handler.Enqueue(Reply(HttpStatusCode.OK, Fixtures.Read("simkl-anime-episodes-2330432.json")));
+
+        var episodes = await Run(() => _client.GetAnimeEpisodesAsync(2330432, ClientId, User, Token));
+
+        Assert.NotNull(episodes);
+        Assert.Equal([1, 2, 3, 4], episodes.Select(e => e.Number));
+        Assert.All(episodes, e => Assert.True(e.IsEpisode));
+        Assert.Equal((2, 1), (episodes[0].TvdbSeason!.Value, episodes[0].TvdbEpisode!.Value));
+        Assert.Equal(new AnimeEpisode(2, true, new DateTimeOffset(2026, 10, 15, 0, 45, 0, TimeSpan.FromHours(9)), 1, 2), episodes[1]);
+        Assert.Equal("/anime/episodes/2330432", Assert.Single(_handler.Requests).Uri.AbsolutePath);
+    }
+
+    /// <summary>
+    /// An item without an episode number (a special) is skipped; a missing date or coordinate reads as unknown.
+    /// </summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task SkipsEpisodesWithoutANumber()
+    {
+        _handler.Enqueue(Reply(
+            HttpStatusCode.OK,
+            """[{"type":"special","title":"Recap"},{"episode":0,"type":"episode"},{"episode":3,"type":"episode","date":"soon","tvdb":null},"x"]"""));
+
+        var episodes = await Run(() => _client.GetAnimeEpisodesAsync(7, ClientId, User, Token));
+
+        Assert.Equal([new AnimeEpisode(3, true, null, null, null)], episodes);
+    }
+
+    /// <summary>
+    /// An add reports the IDs of each show Simkl could not match, as text, and nothing for movies.
+    /// </summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task ReportsTheIdsOfUnmatchedShows()
+    {
+        _handler.Enqueue(Reply(
+            HttpStatusCode.Created,
+            """{"added":{"movies":0,"shows":0,"episodes":0},"not_found":{"movies":[{"ids":{"imdb":"tt0"}}],"shows":[{"title":"X","ids":{"tvdb":"432815","simkl":5}},{"ids":"bad"}],"episodes":[]}}"""));
+
+        var result = await Run(() => _client.AddToHistoryAsync(SimklPayload.BuildAdd([Marks.Movie("tt1")]), ClientId, User, allowRewatch: false, Token));
+
+        Assert.NotNull(result);
+        Assert.Equal(3, result.NotFound.Count);
+        var show = Assert.Single(result.NotFoundShows);
+        Assert.Equal("""X {"tvdb":"432815","simkl":5}""", show.Description);
+        Assert.Equal(["simkl=5", "tvdb=432815"], show.Ids.Select(id => $"{id.Key}={id.Value}").Order(StringComparer.Ordinal));
+    }
+
     private static Func<HttpResponseMessage> Reply(HttpStatusCode status, string body, TimeSpan? retryAfter = null) => () =>
     {
         var response = new HttpResponseMessage(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };

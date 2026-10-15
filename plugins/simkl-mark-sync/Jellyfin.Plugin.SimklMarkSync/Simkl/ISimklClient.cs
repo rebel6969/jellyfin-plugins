@@ -51,4 +51,35 @@ public interface ISimklClient
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>One status per item in the same order, or <c>null</c> when the call failed; the failure is already logged.</returns>
     Task<IReadOnlyList<WatchedStatus>?> GetWatchedAsync(IReadOnlyList<WatchedLookupItem> items, string clientId, SimklUser user, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Finds the Simkl anime titles filed under an external ID, with <c>GET /search/id</c>.
+    /// </summary>
+    /// <param name="idName">The ID's name, for example <c>tvdb</c>.</param>
+    /// <param name="idValue">The ID.</param>
+    /// <param name="clientId">The client ID.</param>
+    /// <param name="user">The user's login.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The anime titles' Simkl IDs (empty when the ID is no anime), or <c>null</c> when the call failed; the failure is already logged.</returns>
+    Task<IReadOnlyList<int>?> FindAnimeAsync(string idName, string idValue, string clientId, SimklUser user, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Reads a Simkl anime title, with <c>GET /anime/{id}?extended=full</c>.
+    /// </summary>
+    /// <param name="simklId">The title's Simkl ID.</param>
+    /// <param name="clientId">The client ID.</param>
+    /// <param name="user">The user's login.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The title, without its episodes, or <c>null</c> when the call failed; the failure is already logged.</returns>
+    Task<AnimeTitle?> GetAnimeAsync(int simklId, string clientId, SimklUser user, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Lists a Simkl anime title's episodes, with <c>GET /anime/episodes/{id}?extended=full</c>.
+    /// </summary>
+    /// <param name="simklId">The title's Simkl ID.</param>
+    /// <param name="clientId">The client ID.</param>
+    /// <param name="user">The user's login.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The episodes, specials included, or <c>null</c> when the call failed; the failure is already logged.</returns>
+    Task<IReadOnlyList<AnimeEpisode>?> GetAnimeEpisodesAsync(int simklId, string clientId, SimklUser user, CancellationToken cancellationToken);
 }

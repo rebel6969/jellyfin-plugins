@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -27,6 +28,7 @@ public sealed class MarkSyncProcessor
     private readonly IMarkSyncSettings _settings;
     private readonly TimeProvider _time;
     private readonly ILogger<MarkSyncProcessor> _logger;
+    private readonly AnimeEpisodeResolver _resolver;
     private readonly Dictionary<Guid, (string Token, bool Paid, long ReadAt)> _plans = [];
 
     /// <summary>
@@ -44,6 +46,7 @@ public sealed class MarkSyncProcessor
         _settings = settings;
         _time = time;
         _logger = logger;
+        _resolver = new AnimeEpisodeResolver(client);
     }
 
     /// <summary>
@@ -116,6 +119,12 @@ public sealed class MarkSyncProcessor
         }
     }
 
+    // Simkl echoes a not-found show's IDs as they were sent. Values compare as text, as Simkl's own ID is a number.
+    private static bool SameIds(IReadOnlyDictionary<string, string> echoed, IReadOnlyDictionary<string, object> sent) =>
+        echoed.Count == sent.Count
+        && sent.All(id => echoed.TryGetValue(id.Key, out var value)
+            && string.Equals(value, Convert.ToString(id.Value, CultureInfo.InvariantCulture), StringComparison.Ordinal));
+
     // Simkl keeps rewatches only for PRO and VIP, and drops the whole write when a free account sends allow_rewatch,
     // so the plan is read first (and cached; an unreadable plan is not cached and counts as free).
     private async Task<bool> HasPaidPlanAsync(Guid userId, string clientId, SimklUser user, CancellationToken cancellationToken)
@@ -165,7 +174,8 @@ public sealed class MarkSyncProcessor
             LogRewatches(userId, result.RewatchStatuses);
         }
 
-        LogNotFound(result, "marked watched");
+        var handled = await PlaceUnmatchedAsync(userId, played.OfType<EpisodeMark>().ToList(), result, adding: true, allowRewatch, clientId, user, cancellationToken).ConfigureAwait(false);
+        LogNotFound(result, "marked watched", handled);
     }
 
     private void LogRewatches(Guid userId, IReadOnlyList<string> statuses)
@@ -204,7 +214,8 @@ public sealed class MarkSyncProcessor
             result.Movies,
             completedMovies.Count,
             result.Episodes);
-        LogNotFound(result, "unmarked");
+        var handled = await PlaceUnmatchedAsync(userId, episodes, result, adding: false, allowRewatch: false, clientId, user, cancellationToken).ConfigureAwait(false);
+        LogNotFound(result, "unmarked", handled);
     }
 
     // Simkl can only unmark a movie by removing it from the library, which would also drop a "plan to watch" entry.
@@ -241,9 +252,106 @@ public sealed class MarkSyncProcessor
         return completed;
     }
 
-    private void LogNotFound(SimklWriteResult result, string action)
+    // Simkl matches an anime episode sent with TVDB numbering through the TVDB coordinate stored on each of its
+    // episodes, and lists the show as not found when that coordinate is missing or wrong. Such episodes are placed in
+    // Simkl's own catalogue and sent again by Simkl's own numbering. Returns the not-found descriptions handled here.
+    private async Task<HashSet<string>> PlaceUnmatchedAsync(
+        Guid userId,
+        List<EpisodeMark> episodes,
+        SimklWriteResult result,
+        bool adding,
+        bool allowRewatch,
+        string clientId,
+        SimklUser user,
+        CancellationToken cancellationToken)
     {
-        foreach (var item in result.NotFound)
+        var handled = new HashSet<string>(StringComparer.Ordinal);
+        var action = adding ? "marked watched" : "unmarked";
+        var placements = new List<EpisodePlacement>();
+        var placedSeasons = new HashSet<(Guid SeriesId, int Season)>();
+        foreach (var show in result.NotFoundShows)
+        {
+            var marks = episodes.Where(m => SameIds(show.Ids, m.ShowIds)).ToList();
+            if (marks.Count == 0)
+            {
+                continue;
+            }
+
+            handled.Add(show.Description);
+            foreach (var season in marks.GroupBy(m => (m.SeriesId, m.Season)).Where(s => placedSeasons.Add(s.Key)))
+            {
+                placements.AddRange(await _resolver.PlaceAsync(season.ToList(), clientId, user, cancellationToken).ConfigureAwait(false));
+            }
+        }
+
+        foreach (var placement in placements)
+        {
+            if (placement.IsPlaced)
+            {
+                _logger.LogInformation(
+                    "Simkl: {Show} S{Season}E{Episode} is episode {SimklEpisode} of Simkl title {SimklId}, placed {How}",
+                    placement.Mark.ShowTitle,
+                    placement.Mark.Season,
+                    placement.TvdbEpisode,
+                    placement.SimklEpisode,
+                    placement.SimklId,
+                    placement.Detail);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "Simkl could not match {Show} S{Season}E{Episode}: {Reason}; it was not {Action}",
+                    placement.Mark.ShowTitle,
+                    placement.Mark.Season,
+                    placement.TvdbEpisode,
+                    placement.Detail,
+                    action);
+            }
+        }
+
+        var placed = placements.Where(p => p.IsPlaced).ToList();
+        if (placed.Count == 0)
+        {
+            return handled;
+        }
+
+        var request = SimklPayload.BuildCatalogWrite(placed, adding);
+        var retry = adding
+            ? await _client.AddToHistoryAsync(request, clientId, user, allowRewatch, cancellationToken).ConfigureAwait(false)
+            : await _client.RemoveFromHistoryAsync(request, clientId, user, cancellationToken).ConfigureAwait(false);
+        if (retry is null)
+        {
+            return handled;
+        }
+
+        if (adding)
+        {
+            _logger.LogInformation(
+                "Simkl: {Count} episodes sent again by Simkl's own numbering for user {UserId}; newly added {Episodes} episodes, the rest were already watched",
+                placed.Count,
+                userId,
+                retry.Episodes);
+            if (allowRewatch)
+            {
+                LogRewatches(userId, retry.RewatchStatuses);
+            }
+        }
+        else
+        {
+            _logger.LogInformation(
+                "Simkl: {Count} episodes unmarked again by Simkl's own numbering for user {UserId}: {Episodes} episodes removed",
+                placed.Count,
+                userId,
+                retry.Episodes);
+        }
+
+        LogNotFound(retry, action, new HashSet<string>(StringComparer.Ordinal));
+        return handled;
+    }
+
+    private void LogNotFound(SimklWriteResult result, string action, IReadOnlySet<string> handled)
+    {
+        foreach (var item in result.NotFound.Where(item => !handled.Contains(item)))
         {
             _logger.LogWarning("Simkl could not match {Item}; it was not {Action}", item, action);
         }

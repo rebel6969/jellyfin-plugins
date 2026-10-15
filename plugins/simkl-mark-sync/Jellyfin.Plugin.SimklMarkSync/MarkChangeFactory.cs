@@ -131,7 +131,10 @@ public static class MarkChangeFactory
 
         var last = episode.IndexNumberEnd is int end && end > first && end - first < MaxEpisodesPerFile ? end : first;
         var numbers = Enumerable.Range(first, last - first + 1).ToArray();
-        return new EpisodeMark(userId, episode.Id, played, watchedAt, series.Id, showIds, series.Name, series.ProductionYear, season, numbers);
+        return new EpisodeMark(userId, episode.Id, played, watchedAt, series.Id, showIds, series.Name, series.ProductionYear, season, numbers)
+        {
+            PremiereDate = episode.PremiereDate,
+        };
     }
 
     // Jellyfin stores user-data dates in UTC; one read back from its database has no kind.

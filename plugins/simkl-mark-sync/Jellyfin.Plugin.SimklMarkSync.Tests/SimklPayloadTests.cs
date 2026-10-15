@@ -137,5 +137,43 @@ public sealed class SimklPayloadTests
         Assert.Equal("""[{"ids":{"imdb":"tt2"},"type":"movie"},{"ids":{"imdb":"tt1"},"type":"movie"}]""", JsonSerializer.Serialize(lookup, SimklPayload.JsonOptions));
     }
 
+    /// <summary>
+    /// A catalogue write addresses each title by its Simkl ID alone, one season, episodes in order and once each with
+    /// the latest watch time, and leaves out episodes that were not placed.
+    /// </summary>
+    [Fact]
+    public void CatalogueAddUsesSimklIdsAndNumbering()
+    {
+        var early = Marks.Episode(2, 3);
+        var late = early with { WatchedAtUtc = Marks.WatchedAt.AddHours(1) };
+        var request = SimklPayload.BuildCatalogWrite(
+        [
+            new EpisodePlacement(late, 3, 9, 3, "by position"),
+            new EpisodePlacement(Marks.Episode(2, 2), 2, 9, 2, "by position"),
+            new EpisodePlacement(early, 3, 9, 3, "by position"),
+            new EpisodePlacement(Marks.Episode(3, 1), 1, 4, 1, "by coordinate"),
+            new EpisodePlacement(Marks.Episode(2, 9), 9, 0, 0, "no fit"),
+        ],
+        adding: true);
+
+        Assert.Equal(
+            """{"shows":[{"ids":{"simkl":4},"use_tvdb_anime_seasons":false,"seasons":[{"number":1,"episodes":[{"number":1,"watched_at":"2026-10-04T03:30:00Z"}]}]},"""
+            + """{"ids":{"simkl":9},"use_tvdb_anime_seasons":false,"seasons":[{"number":1,"episodes":[{"number":2,"watched_at":"2026-10-04T03:30:00Z"},{"number":3,"watched_at":"2026-10-04T04:30:00Z"}]}]}]}""",
+            Serialize(request));
+    }
+
+    /// <summary>
+    /// A catalogue removal carries no watch times, still names each episode, and is empty when nothing was placed.
+    /// </summary>
+    [Fact]
+    public void CatalogueRemovalNamesEpisodesWithoutWatchTimes()
+    {
+        var removal = SimklPayload.BuildCatalogWrite([new EpisodePlacement(Marks.Episode(2, 2, played: false), 2, 9, 2, "by position")], adding: false);
+        var nothing = SimklPayload.BuildCatalogWrite([new EpisodePlacement(Marks.Episode(2, 2, played: false), 2, 0, 0, "no fit")], adding: false);
+
+        Assert.Equal("""{"shows":[{"ids":{"simkl":9},"use_tvdb_anime_seasons":false,"seasons":[{"number":1,"episodes":[{"number":2}]}]}]}""", Serialize(removal));
+        Assert.True(nothing.IsEmpty);
+    }
+
     private static string Serialize(HistoryRequest request) => JsonSerializer.Serialize(request, SimklPayload.JsonOptions);
 }

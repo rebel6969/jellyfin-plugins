@@ -60,6 +60,14 @@
     "category": "General",
     "versions": [
       {
+        "version": "1.2.0.0",
+        "targetAbi": "12.1.0.0",
+        "changelog": "Anime episodes Simkl cannot match by TVDB numbering (its catalogue files them under the wrong TVDB season) are placed through Simkl's own catalogue and sent by Simkl's own title and episode numbers, so the watch is not lost. An episode is placed only when exactly one fits by its TVDB coordinate, or by its position and air date.",
+        "sourceUrl": "https://github.com/rebel6969/jellyfin-plugins/releases/download/simkl-mark-sync-v1.2.0.0/simkl-mark-sync_1.2.0.0.zip",
+        "checksum": "d399805d9bb525e6504fb904e2d2504d",
+        "timestamp": "2026-10-15T08:20:31.0000000Z"
+      },
+      {
         "version": "1.1.0.0",
         "targetAbi": "12.1.0.0",
         "changelog": "Also sends every playback Jellyfin counts as finished, so a watch reaches Simkl when the official plugin misses it; optional rewatch tracking for Simkl PRO/VIP.",

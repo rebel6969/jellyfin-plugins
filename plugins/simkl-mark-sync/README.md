@@ -67,6 +67,25 @@ included. So:
   library. That would also delete a "Plan to watch" entry, so the plugin first asks Simkl
   (`POST /sync/watched`). It removes a movie only when Simkl reports it in the **completed** list.
 
+### Anime that Simkl cannot place by TVDB numbering
+
+Episodes go out with Jellyfin's TVDB season and episode numbers and `use_tvdb_anime_seasons`. Simkl files each anime
+season as its own title and finds the episode through the TVDB season and episode it stores on each of its episodes.
+When that stored mapping is missing or wrong, Simkl answers "not found" and the watch would be lost. That happened on
+2026-10-15 with *A Returner's Magic Should Be Special*: Simkl filed episodes 2 to 4 of its season-2 title under TVDB
+**season 1**, so S2E2 matched nothing.
+
+The plugin then looks the episode up in Simkl's own catalogue (`GET /search/id`, `GET /anime/{id}`,
+`GET /anime/episodes/{id}`; reads only) and places it only when exactly one episode fits:
+
+- Simkl files that episode under the episode's TVDB season and number, or
+- it sits at the episode's position in a title mapped to that TVDB season, and it aired within a day of Jellyfin's
+  premiere date. The position comes from the title's episodes filed under that season, and they must all agree.
+  An episode Simkl files under another episode of the title's own seasons is never taken.
+
+A placed episode is sent again by Simkl's own title ID and episode number. Unmarks work the same way, still naming each
+episode. An episode that does not fit is logged with the reason and left alone, so a wrong episode is never marked.
+
 ### Simkl's API rules
 
 - One request at a time, at least 1.1 seconds apart. Simkl allows one POST per second per login.
@@ -92,9 +111,9 @@ Then install **Simkl Mark Sync** from the catalog and restart Jellyfin.
 
 ### Manually
 
-1. Download `simkl-mark-sync_1.1.0.0.zip` from the
-   [releases](https://github.com/rebel6969/jellyfin-plugins/releases/tag/simkl-mark-sync-v1.1.0.0).
-2. Extract it into `<jellyfin data dir>/plugins/Simkl Mark Sync_1.1.0.0/`.
+1. Download `simkl-mark-sync_1.2.0.0.zip` from the
+   [releases](https://github.com/rebel6969/jellyfin-plugins/releases/tag/simkl-mark-sync-v1.2.0.0).
+2. Extract it into `<jellyfin data dir>/plugins/Simkl Mark Sync_1.2.0.0/`.
 3. Restart Jellyfin.
 
 ### Check that it is active
@@ -107,6 +126,8 @@ Simkl Mark Sync is ready: found the official Simkl plugin's client ID
 Simkl: 1 items marked watched for user <id> (1 from finished playbacks); newly added 0 movies and 0 episodes, the rest were already watched
 Simkl: rewatch status completed for 1 items of user <id>
 Simkl: unmarked for user <id>: 0 of 0 movies and 1 episodes removed
+Simkl: A Returner's Magic Should Be Special S2E2 is episode 2 of Simkl title 2330432, placed by its position in the season and its air date
+Simkl: 1 episodes sent again by Simkl's own numbering for user <id>; newly added 1 episodes, the rest were already watched
 ```
 
 "Newly added 0" after a finished playback means the official plugin had already recorded it. Items Simkl could not

@@ -28,4 +28,9 @@
     <ProjectReference Include="../Jellyfin.Plugin.SimklMarkSync/Jellyfin.Plugin.SimklMarkSync.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Simkl's real catalogue answers for A Returner's Magic Should Be Special, read 2026-10-15. -->
+    <None Include="Fixtures/simkl-*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

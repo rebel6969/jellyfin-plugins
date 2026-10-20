@@ -7,9 +7,9 @@ Recovery/reference files for the customizations tested on Jellyfin Server 12.0.0
 Contains two local additions, intended to follow `fix_v17.css`:
 
 - A narrow-desktop detail-page fallback below 50em. Native mobile layout is not targeted by those rules.
-- Position the native Jellyfin 12 user-menu button before the server brand using its stable `aria-controls="app-user-menu"` selector and the MUI toolbar structure.
+- Place the native Jellyfin 12 user-menu button between the server brand and the first tab, using its stable `aria-controls="app-user-menu"` selector and the MUI toolbar structure: the toolbar's brand-and-tabs stack becomes `display: contents`, so the brand, the menu and the tabs are ordered as siblings. Only the desktop header changes; the phone header, which has no brand or tabs, keeps Jellyfin's layout.
 
-The deployed server currently stores these rules directly in Branding → Custom CSS. This repository upload **does not change deployment**. Do not import this file while retaining duplicate pasted rules. If switching to a CDN import later, back up branding first, replace only the matching pasted rules, keep the existing theme imports, and use a pinned commit URL rather than a mutable branch URL.
+The deployed server currently stores these rules directly in Branding → Custom CSS, after the theme imports and a jsDelivr import of `fix_v17.css` pinned to a commit. This repository upload **does not change deployment**. Do not import this file while retaining duplicate pasted rules. If switching to a CDN import later, back up branding first, replace only the matching pasted rules, keep the existing theme imports, and use a pinned commit URL rather than a mutable branch URL.
 
 The user-menu change is CSS visual ordering, not DOM reordering: keyboard tab order remains Jellyfin's original order. No positive tabindex or React DOM mutation is introduced. Upstream header structure changes may require revisiting the selector.
 
@@ -49,7 +49,7 @@ Observed checks on the installed customization:
 - Visible single homepage hero; muted trailer time advances; slide selection and pause/resume work.
 - Details → Back restores exactly one hero; logos clear metadata; media rows start beneath the hero.
 - 1366px desktop and 390px narrow viewport checked; no narrow horizontal overflow.
-- User icon appears before brand, and its menu opens on desktop/narrow viewports.
+- User icon appears between the brand and the first tab at 1366 px and 900 px, the 390 px phone header is unchanged, and the menu opens fully on screen at all three widths (Jellyfin 12.2.0, 2026-10-20).
 
 These checks do not guarantee every layout, client, route variant, or future release. Branding/theme settings and media were preserved. Do not run destructive cleanup jobs as a generic validation step.
 

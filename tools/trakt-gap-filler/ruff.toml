@@ -1,0 +1,2 @@
+# The code's own style: 120-column lines. Rules stay at ruff's defaults.
+line-length = 120

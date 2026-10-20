@@ -32,6 +32,8 @@ Each run, for every Jellyfin user linked in the Trakt plugin with **Scrobble** o
 
 It never removes anything from Trakt, never refreshes the plugin's login (it reads the token the plugin saved), and
 does not handle movies (the plugin matches movies by id reliably) or replays of an episode Trakt already has.
+Trakt tokens last 7 days and the plugin renews one only when it next calls Trakt, so while the saved token has
+expired (by the plugin's `AccessTokenExpiration`, offset included) a run skips that user instead of failing.
 The Trakt client id is found automatically: of the two keys inside the plugin's DLL, the one Trakt accepts with
 your token.
 
@@ -72,5 +74,6 @@ Overgeared S01E02 'Episode 2': 0 Trakt episodes aired within a day of 2026-10-04
 python3 -W error -m unittest test_trakt_gap_filler
 ```
 
-36 tests against fake Jellyfin and Trakt APIs built from the two real cases above; each safety rule was also broken
-on purpose and caught by its test (23 of 23 for the original rules, 20 of 20 for the plugin-scrobble check).
+39 tests against fake Jellyfin and Trakt APIs built from the two real cases above; each safety rule was also broken
+on purpose and caught by its test (23 of 23 for the original rules, 20 of 20 for the plugin-scrobble check, 2 of 2
+for the expired-token skip).

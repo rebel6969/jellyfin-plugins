@@ -25,7 +25,8 @@ Each run, for every Jellyfin user linked in the Trakt plugin with scrobbling or 
 - adds one play, dated by Jellyfin's playback-stopped activity entry (else the last-played time), once
   the gap has been seen on two runs at least the settle time apart, so it never races the plugin.
 Without --apply it only logs what it would do. It never removes anything from Trakt and never refreshes
-the plugin's login.
+the plugin's login; while the token the plugin saved has expired, it skips that user until the plugin renews
+the token on its next Trakt call.
 """
 
 from __future__ import annotations
@@ -46,7 +47,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -65,7 +66,7 @@ Clock = Callable[[], float]
 
 
 def log(level: str, message: str) -> None:
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     print(f"[{now}] [{level}] [{NAME}] {message}", file=sys.stderr, flush=True)
 
 
@@ -152,8 +153,18 @@ def parse_time(value: str | None) -> datetime | None:
     return datetime.fromisoformat(f"{match.group(1)}.{fraction}+00:00")
 
 
+def token_expiry(value: str | None) -> datetime | None:
+    """The plugin saves AccessTokenExpiration as .NET local time with its offset (or UTC with Z). A value
+    without an offset does not say when the token expires, so it reads as unknown."""
+    try:
+        moment = datetime.fromisoformat(value or "")
+    except ValueError:
+        return None
+    return moment if moment.tzinfo else None
+
+
 def trakt_time(moment: datetime) -> str:
-    return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
 def norm_title(text: str) -> str:
@@ -165,6 +176,7 @@ class TraktUser:
     jellyfin_id: str  # 32 hex digits, no dashes, as Jellyfin's API prints ids
     token: str
     excluded: list[str] = field(default_factory=list)
+    token_expires: datetime | None = None
 
 
 def read_trakt_users(config: Path) -> list[TraktUser]:
@@ -176,8 +188,31 @@ def read_trakt_users(config: Path) -> list[TraktUser]:
         ).lower() == "true"
         if token and posts:
             excluded = [e.text.rstrip("/") for e in node.iterfind("LocationsExcluded/string") if e.text]
-            users.append(TraktUser((node.findtext("LinkedMbUserId") or "").replace("-", "").lower(), token, excluded))
+            users.append(
+                TraktUser(
+                    (node.findtext("LinkedMbUserId") or "").replace("-", "").lower(),
+                    token,
+                    excluded,
+                    token_expiry(node.findtext("AccessTokenExpiration")),
+                )
+            )
     return users
+
+
+def with_live_tokens(users: list[TraktUser], now: datetime) -> list[TraktUser]:
+    """Drop the users whose saved token has expired. The plugin renews a token only when it next calls Trakt, and
+    this tool never writes the plugin's login, so it waits for that instead of failing every run."""
+    live = []
+    for user in users:
+        if user.token_expires is not None and user.token_expires <= now:
+            log(
+                "INFO",
+                f"the Trakt plugin's token for Jellyfin user {user.jellyfin_id} expired at "
+                f"{trakt_time(user.token_expires)}; skipped until the plugin renews it on its next Trakt call",
+            )
+        else:
+            live.append(user)
+    return live
 
 
 def plugin_client_ids(plugins: Path) -> list[str]:
@@ -315,8 +350,8 @@ def plugin_scrobble(trakt: Api, show: int, item: dict[str, Any], started: dateti
     number. Return the time of a play Trakt holds for this show at that season and number, made from PLUGIN_WINDOW
     before the playback started to PLUGIN_WINDOW after it stopped, else None. Trakt takes start_at/end_at as
     dates (midnight UTC, end exclusive), so whole days are asked for and the exact window is applied here."""
-    low = datetime.fromtimestamp(started.timestamp() - PLUGIN_WINDOW, timezone.utc)
-    high = datetime.fromtimestamp(stopped.timestamp() + PLUGIN_WINDOW, timezone.utc)
+    low = datetime.fromtimestamp(started.timestamp() - PLUGIN_WINDOW, UTC)
+    high = datetime.fromtimestamp(stopped.timestamp() + PLUGIN_WINDOW, UTC)
     days = {"start_at": low.date().isoformat(), "end_at": (high.date() + timedelta(days=1)).isoformat()}
     target = (item.get("ParentIndexNumber"), item.get("IndexNumber"))
     page = 1
@@ -368,7 +403,7 @@ def fill(
     post_spacing: Callable[[], None],
 ) -> dict[str, int]:
     now = clock()
-    cutoff = datetime.fromtimestamp(now - lookback, timezone.utc)
+    cutoff = datetime.fromtimestamp(now - lookback, UTC)
     if since and since > cutoff:
         cutoff = since
     for bucket in ("pending", "done", "alerted"):
@@ -495,6 +530,9 @@ def main(argv: list[str]) -> int:
             users = read_trakt_users(plugins / "configurations" / "Trakt.xml")
             if not users:
                 log("INFO", "no Jellyfin user is linked to Trakt with scrobbling or set-watched on")
+                return 0
+            users = with_live_tokens(users, datetime.fromtimestamp(time.time(), UTC))
+            if not users:
                 return 0
             client = os.environ.get("TRAKT_CLIENT_ID") or state.get("client_id") or ""
             if not client:

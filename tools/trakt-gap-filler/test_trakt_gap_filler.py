@@ -13,7 +13,7 @@ import tempfile
 import unittest
 import urllib.parse
 from contextlib import redirect_stderr
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -109,7 +109,7 @@ def at(iso: str) -> float:
 
 
 def utc(iso: str) -> datetime:
-    return datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    return datetime.fromisoformat(iso)
 
 
 class FakeJellyfin:
@@ -523,8 +523,15 @@ class PluginScrobbleTests(FillBase):
 
 
 class HelperTests(unittest.TestCase):
+    def test_token_expiry_keeps_the_plugins_offset_and_ignores_naive_values(self) -> None:
+        expected = datetime(2026, 10, 27, 15, 47, 27, 123456, tzinfo=UTC)
+        self.assertEqual(MOD.token_expiry("2026-10-27T21:17:27.1234567+05:30"), expected)
+        self.assertEqual(MOD.token_expiry("2026-10-27T15:47:27.123456Z"), expected)
+        for value in (None, "", "0001-01-01T00:00:00", "soon"):
+            self.assertIsNone(MOD.token_expiry(value))
+
     def test_parse_time_reads_jellyfin_and_trakt_forms(self) -> None:
-        expected = datetime(2026, 10, 5, 5, 29, 52, 225371, tzinfo=timezone.utc)
+        expected = datetime(2026, 10, 5, 5, 29, 52, 225371, tzinfo=UTC)
         self.assertEqual(MOD.parse_time("2026-10-05T05:29:52.2253719Z"), expected)
         self.assertEqual(MOD.parse_time("2026-10-05T05:29:52.225371+00:00"), expected)
         self.assertEqual(MOD.parse_time("2026-10-05T05:29:52Z"), expected.replace(microsecond=0))
@@ -612,6 +619,8 @@ class MainTests(unittest.TestCase):
             mock.patch.dict(os.environ, self.env),
             mock.patch.object(MOD, "STATE_DIR", str(self.state_dir)),
             mock.patch.object(MOD, "Http", side_effect=self.http),
+            # main() runs on the wall clock: pin it to the fixture's day so the lookback still covers its play.
+            mock.patch.object(MOD.time, "time", return_value=at("2026-10-05T06:00:00+00:00")),
             redirect_stderr(err),
         ):
             self.assertEqual(MOD.main([]), 0)
@@ -619,6 +628,35 @@ class MainTests(unittest.TestCase):
         self.assertEqual(json.loads(state_text)["client_id"], "d" * 64)
         self.assertNotIn("SECRET-TOKEN", state_text + err.getvalue())
         self.assertIn("dry-run: played=1", err.getvalue())
+
+    def run_with_expiry(self, expiry: str, http: Any) -> str:
+        config = Path(self.env["JELLYFIN_PLUGINS_DIR"]) / "configurations" / "Trakt.xml"
+        text = config.read_text(encoding="utf-8")
+        config.write_text(
+            text.replace("</Scrobble>", f"</Scrobble><AccessTokenExpiration>{expiry}</AccessTokenExpiration>"),
+            encoding="utf-8",
+        )
+        err = io.StringIO()
+        with (
+            mock.patch.dict(os.environ, self.env),
+            mock.patch.object(MOD, "STATE_DIR", str(self.state_dir)),
+            mock.patch.object(MOD, "Http", side_effect=http),
+            mock.patch.object(MOD.time, "time", return_value=at("2026-10-05T06:00:00+00:00")),
+            redirect_stderr(err),
+        ):
+            self.assertEqual(MOD.main([]), 0)
+        return err.getvalue()
+
+    def test_an_expired_plugin_token_skips_the_user_without_calling_any_api(self) -> None:
+        # 11:29 at +05:30 is 05:59Z, a minute before the clock; read without its offset it would look valid.
+        log = self.run_with_expiry("2026-10-05T11:29:00.1234567+05:30", AssertionError("must not call any API"))
+        self.assertIn("expired at 2026-10-05T05:59:00.000Z; skipped until the plugin renews it", log)
+
+    def test_a_plugin_token_valid_by_its_offset_runs(self) -> None:
+        # 02:01 at -04:00 is 06:01Z, a minute after the clock; read without its offset it would look expired.
+        log = self.run_with_expiry("2026-10-05T02:01:00-04:00", self.http)
+        self.assertNotIn("expired", log)
+        self.assertIn("dry-run: played=1", log)
 
     def test_missing_configuration_refuses_to_run(self) -> None:
         with mock.patch.dict(os.environ, dict(self.env, JELLYFIN_API_TOKEN="")), redirect_stderr(io.StringIO()):

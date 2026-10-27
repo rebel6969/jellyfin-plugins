@@ -37,6 +37,12 @@ expired (by the plugin's `AccessTokenExpiration`, offset included) a run skips t
 The Trakt client id is found automatically: of the two keys inside the plugin's DLL, the one Trakt accepts with
 your token.
 
+A run saves its progress before every play and stops starting plays once `TRAKT_GAP_FILLER_BUDGET_MINUTES` have
+passed, so a run slowed down by the network or by a burst of plays (a whole season marked watched at once) is
+carried on by the next run instead of being stopped by systemd and started over. All calls to one API share a
+kept-alive connection; on 2026-10-27 a run that opened a new connection for every call (3 to 4 per played
+episode) on a host losing SYNs upstream ran past the unit's 10-minute timeout, and every following run did the same.
+
 ## Install
 
 ```sh
@@ -65,6 +71,7 @@ Overgeared S01E02 'Episode 2': 0 Trakt episodes aired within a day of 2026-10-04
 | `TRAKT_GAP_FILLER_LOOKBACK_HOURS` | `72` | How far back to look at plays |
 | `TRAKT_GAP_FILLER_SINCE` | none | Never look at plays before this UTC time (e.g. when you linked Trakt) |
 | `TRAKT_GAP_FILLER_SETTLE_MINUTES` | `10` | How long a gap must persist before it is filled |
+| `TRAKT_GAP_FILLER_BUDGET_MINUTES` | `5` | Stop starting plays after this long; keep it well below the unit's `TimeoutStartSec` (10 min) |
 | `TRAKT_CLIENT_ID` | auto | Set only to skip the automatic detection |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | none | Optional: a message for each play added and each episode it could not match |
 
@@ -74,6 +81,7 @@ Overgeared S01E02 'Episode 2': 0 Trakt episodes aired within a day of 2026-10-04
 python3 -W error -m unittest test_trakt_gap_filler
 ```
 
-39 tests against fake Jellyfin and Trakt APIs built from the two real cases above; each safety rule was also broken
-on purpose and caught by its test (23 of 23 for the original rules, 20 of 20 for the plugin-scrobble check, 2 of 2
-for the expired-token skip).
+43 tests against fake Jellyfin and Trakt APIs built from the two real cases above, plus a loopback HTTP server for
+the kept-alive connection; each safety rule was also broken on purpose and caught by its test (23 of 23 for the
+original rules, 20 of 20 for the plugin-scrobble check, 2 of 2 for the expired-token skip, 3 of 3 for the per-play
+save, the time budget and the kept-alive connection).

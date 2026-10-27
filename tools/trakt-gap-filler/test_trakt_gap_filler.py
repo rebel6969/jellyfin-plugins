@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import copy
 import fcntl
+import http.server
 import importlib.util
 import io
 import json
 import os
 import sys
 import tempfile
+import threading
 import unittest
 import urllib.parse
 from contextlib import redirect_stderr
@@ -196,7 +198,12 @@ class FillBase(unittest.TestCase):
         self.spaced += 1
 
     def run_fill(
-        self, apply: bool = True, since: datetime | None = None, lookback: float = 72 * 3600.0
+        self,
+        apply: bool = True,
+        since: datetime | None = None,
+        lookback: float = 72 * 3600.0,
+        deadline: float | None = None,
+        checkpoint: Any = None,
     ) -> dict[str, int]:
         with redirect_stderr(io.StringIO()) as err:
             tally: dict[str, int] = MOD.fill(
@@ -210,6 +217,8 @@ class FillBase(unittest.TestCase):
                 600.0,
                 since,
                 self.space,
+                deadline=deadline,
+                checkpoint=checkpoint,
             )
         self.log = err.getvalue()
         return tally
@@ -695,6 +704,102 @@ class MainTests(unittest.TestCase):
             self.assertEqual(MOD.main(["--apply"]), 1)
         self.assertEqual(json.loads((self.state_dir / "state.json").read_text())["client_id"], "d" * 64)
         self.assertIn("failed", telegram.call_args.args[0])
+
+
+class Stopped(Exception):
+    """Stands in for systemd stopping a run in the middle."""
+
+
+class BudgetAndProgressTests(FillBase):
+    def second_play(self) -> dict[str, Any]:
+        item = copy.deepcopy(ITEM)
+        item["Id"] = "0b1b5d77a1f84b6aa3a3a30cbd1f7c11"
+        item["UserData"]["LastPlayedDate"] = "2026-10-05T05:10:00.0000000Z"
+        return item
+
+    def test_a_run_past_its_time_budget_leaves_the_plays_for_the_next_run(self) -> None:
+        tally = self.run_fill(deadline=self.now)
+        self.assertEqual((tally["played"], tally["deferred"]), (0, 1))
+        self.assertEqual(self.trakt.calls, [("GET", "/users/settings")])
+        self.assertIn("time budget used up: 1 played episodes left for the next run", self.log)
+        self.assertEqual(self.run_fill(deadline=self.now + 1.0)["pending"], 1)
+
+    def test_regression_progress_is_saved_before_each_play_so_a_stopped_run_keeps_it(self) -> None:
+        # 2026-10-27: 49 plays marked at once, each checked over a new connection, outlasted the unit's timeout;
+        # the state was saved only at the end, so every following run started again from the first play.
+        self.jellyfin.items.append(self.second_play())
+        self.trakt.history[14531280] = [history_row(1, 26, "2026-10-05T05:33:00.000Z", 14531280)]
+        answer = self.trakt.call
+        history_calls = 0
+
+        def stop_at_the_second_play(
+            method: str, path: str, query: dict[str, str] | None = None, body: Any = None
+        ) -> Any:
+            nonlocal history_calls
+            if path.startswith("/sync/history/episodes/"):
+                history_calls += 1
+                if history_calls == 2:
+                    raise Stopped
+            return answer(method, path, query, body)
+
+        saved: list[dict[str, Any]] = []
+        with mock.patch.object(self.trakt, "call", side_effect=stop_at_the_second_play), self.assertRaises(Stopped):
+            self.run_fill(checkpoint=lambda: saved.append(copy.deepcopy(self.state)))
+        self.assertEqual(len(saved), 2)
+        self.assertIn(f"{USER}:{ITEM['Id']}:2026-10-05T05:29:52.000Z", saved[-1]["done"])
+
+
+class HttpTests(unittest.TestCase):
+    def serve(self, replies: list[tuple[int, dict[str, str], bytes]]) -> tuple[str, list[str], list[str]]:
+        """A loopback HTTP/1.1 server answering GETs from the list; returns its base, connections and paths."""
+        connections: list[str] = []
+        paths: list[str] = []
+        pending = list(replies)
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def setup(self) -> None:
+                super().setup()
+                connections.append(str(self.client_address))
+
+            def do_GET(self) -> None:
+                paths.append(self.path)
+                status, headers, body = pending.pop(0)
+                self.send_response(status)
+                for name, value in {
+                    "Content-Type": "application/json",
+                    "Content-Length": str(len(body)),
+                    **headers,
+                }.items():
+                    self.send_header(name, value)
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, format: str, *args: Any) -> None:
+                return
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return f"http://127.0.0.1:{server.server_address[1]}/jf", connections, paths
+
+    def test_regression_calls_share_one_kept_alive_connection(self) -> None:
+        base, connections, paths = self.serve([(200, {}, b'{"n": 1}')] * 3)
+        api = MOD.Http(base, {}, 0.0, sleep=lambda _: None)
+        self.addCleanup(api.close)
+        self.assertEqual([api.call("GET", "/Items", {"a": "b"}) for _ in range(3)], [{"n": 1}] * 3)
+        self.assertEqual(paths, ["/jf/Items?a=b"] * 3)
+        self.assertEqual(len(connections), 1)
+
+    def test_a_connection_the_server_closes_is_opened_again(self) -> None:
+        base, connections, _ = self.serve([(200, {"Connection": "close"}, b"{}"), (200, {}, b'{"ok": true}')])
+        slept: list[float] = []
+        api = MOD.Http(base, {}, 0.0, sleep=slept.append)
+        self.addCleanup(api.close)
+        self.assertEqual((api.call("GET", "/a"), api.call("GET", "/b")), ({}, {"ok": True}))
+        self.assertEqual((len(connections), slept), (2, [0.0, 0.0]))
 
 
 if __name__ == "__main__":

@@ -26,7 +26,9 @@ Each run, for every Jellyfin user linked in the Trakt plugin with scrobbling or 
   the gap has been seen on two runs at least the settle time apart, so it never races the plugin.
 Without --apply it only logs what it would do. It never removes anything from Trakt and never refreshes
 the plugin's login; while the token the plugin saved has expired, it skips that user until the plugin renews
-the token on its next Trakt call.
+the token on its next Trakt call. Progress is saved before each play, and a run stops starting plays once
+TRAKT_GAP_FILLER_BUDGET_MINUTES have passed, so a slow run is carried on by the next one instead of being
+stopped from outside and started again from the first play.
 """
 
 from __future__ import annotations
@@ -35,6 +37,7 @@ import argparse
 import fcntl
 import gzip
 import html
+import http.client
 import json
 import os
 import re
@@ -83,18 +86,34 @@ class Api(Protocol):
 
 
 class Http:
-    """JSON over HTTP with gzip; retries only 429, 5xx and network errors, at most 3 attempts."""
+    """JSON over HTTP with gzip; retries only 429, 5xx and network errors, at most 3 attempts.
+
+    Calls share one kept-alive connection, opened again only after a failure. On 2026-10-27, 8 of 42 new
+    connections from the host running this tool waited 2 to 19 s to connect (SYNs lost upstream), and a run that
+    opened a connection for every call (3 to 4 per played episode) ran past the unit's timeout."""
 
     def __init__(
         self, base: str, headers: dict[str, str], spacing: float, sleep: Callable[[float], None] = time.sleep
     ) -> None:
-        self.base = base.rstrip("/")
+        parts = urllib.parse.urlsplit(base.rstrip("/"))
+        self.connection_class: type[http.client.HTTPConnection] = (
+            http.client.HTTPSConnection if parts.scheme == "https" else http.client.HTTPConnection
+        )
+        self.host = parts.hostname or ""
+        self.port = parts.port
+        self.prefix = parts.path
         self.headers = headers
         self.spacing = spacing
         self.sleep = sleep
+        self.connection: http.client.HTTPConnection | None = None
+
+    def close(self) -> None:
+        if self.connection is not None:
+            self.connection.close()
+            self.connection = None
 
     def call(self, method: str, path: str, query: dict[str, str] | None = None, body: Any = None) -> Any:
-        url = self.base + path + ("?" + urllib.parse.urlencode(query) if query else "")
+        target = self.prefix + path + ("?" + urllib.parse.urlencode(query) if query else "")
         data = None if body is None else json.dumps(body).encode()
         headers = {**self.headers, "User-Agent": USER_AGENT, "Accept": "application/json", "Accept-Encoding": "gzip"}
         if data is not None:
@@ -102,13 +121,14 @@ class Http:
         last = ""
         for attempt in range(1, 4):
             self.sleep(self.spacing)
-            request = urllib.request.Request(url, data=data, headers=headers, method=method)
             try:
-                with urllib.request.urlopen(request, timeout=60) as response:
-                    status, reply, raw = response.status, response.headers, response.read()
-            except urllib.error.HTTPError as error:
-                status, reply, raw = error.code, error.headers, error.read()
-            except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
+                if self.connection is None:
+                    self.connection = self.connection_class(self.host, self.port, timeout=60)
+                self.connection.request(method, target, body=data, headers=headers)
+                response = self.connection.getresponse()
+                status, reply, raw = response.status, response.headers, response.read()
+            except (http.client.HTTPException, OSError) as error:
+                self.close()
                 last = f"network error: {error}"
                 self.sleep(2.0 * attempt)
                 continue
@@ -401,6 +421,8 @@ def fill(
     settle: float,
     since: datetime | None,
     post_spacing: Callable[[], None],
+    deadline: float | None = None,
+    checkpoint: Callable[[], None] | None = None,
 ) -> dict[str, int]:
     now = clock()
     cutoff = datetime.fromtimestamp(now - lookback, UTC)
@@ -408,13 +430,30 @@ def fill(
         cutoff = since
     for bucket in ("pending", "done", "alerted"):
         state[bucket] = {k: v for k, v in state.get(bucket, {}).items() if float(v) >= now - lookback - 86400.0}
-    tally = {"played": 0, "on_trakt": 0, "pending": 0, "would_add": 0, "added": 0, "unresolved": 0, "excluded": 0}
+    tally = {
+        "played": 0,
+        "on_trakt": 0,
+        "pending": 0,
+        "would_add": 0,
+        "added": 0,
+        "unresolved": 0,
+        "excluded": 0,
+        "deferred": 0,
+    }
     stops = stop_times(jellyfin, cutoff)
     series_ids: dict[str, dict[str, str]] = {}
     for user, trakt in users:
         bind_account(state, user, str(trakt.call("GET", "/users/settings")["user"]["ids"]["slug"]))
         resolver = Resolver(trakt)
-        for item, played in recent_played(jellyfin, user.jellyfin_id, cutoff):
+        plays = recent_played(jellyfin, user.jellyfin_id, cutoff)
+        for index, (item, played) in enumerate(plays):
+            if checkpoint is not None:
+                # Keep what the earlier plays settled, so a run stopped from outside does not redo them.
+                checkpoint()
+            if deadline is not None and clock() >= deadline:
+                tally["deferred"] = len(plays) - index
+                log("WARN", f"time budget used up: {tally['deferred']} played episodes left for the next run")
+                return tally
             tally["played"] += 1
             path = item.get("Path") or ""
             if any(path == root or path.startswith(root + "/") for root in user.excluded):
@@ -517,6 +556,8 @@ def main(argv: list[str]) -> int:
     since = parse_time(os.environ.get("TRAKT_GAP_FILLER_SINCE"))
     lookback = float(os.environ.get("TRAKT_GAP_FILLER_LOOKBACK_HOURS", "72")) * 3600.0
     settle = float(os.environ.get("TRAKT_GAP_FILLER_SETTLE_MINUTES", "10")) * 60.0
+    # Stop starting plays after this long, well inside the unit's 10-minute TimeoutStartSec.
+    deadline = time.time() + float(os.environ.get("TRAKT_GAP_FILLER_BUDGET_MINUTES", "5")) * 60.0
     os.makedirs(STATE_DIR, exist_ok=True)
     with open(os.path.join(STATE_DIR, "run.lock"), "w", encoding="utf-8") as lock:
         try:
@@ -581,6 +622,8 @@ def main(argv: list[str]) -> int:
                 settle,
                 since,
                 lambda: time.sleep(1.1),
+                deadline=deadline,
+                checkpoint=lambda: save_state(state_path, state),
             )
         except ApiError as error:
             if "HTTP 403" in str(error):  # a stale cached client id: probe again next run

@@ -41,7 +41,7 @@ public sealed class MarkSyncProcessorTests
     /// </summary>
     public MarkSyncProcessorTests()
     {
-        _credentials.Setup(c => c.GetClientId()).Returns(ClientId);
+        _credentials.Setup(c => c.GetClientId(It.IsAny<string>())).Returns(ClientId);
         _credentials.Setup(c => c.GetUser(Marks.User)).Returns(() => _user);
         _client
             .Setup(c => c.AddToHistoryAsync(It.IsAny<HistoryRequest>(), ClientId, It.IsAny<SimklUser>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
@@ -287,11 +287,30 @@ public sealed class MarkSyncProcessorTests
     [Fact]
     public async Task SendsNothingWithoutAClientId()
     {
-        _credentials.Setup(c => c.GetClientId()).Returns((string?)null);
+        _credentials.Setup(c => c.GetClientId(It.IsAny<string>())).Returns((string?)null);
 
         await _processor.ProcessAsync([Marks.Movie("tt1"), Marks.Movie("tt2", played: false)], Token);
 
         _client.VerifyNoOtherCalls();
+    }
+
+    /// <summary>
+    /// Each login is sent with the client ID its own token was issued to, and a login whose client ID cannot be told
+    /// is skipped without holding up another user's marks in the same batch.
+    /// </summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task SendsEachLoginWithItsOwnClientIdAndSkipsOneWithout()
+    {
+        var other = new Guid("22222222-3333-4444-5555-666666666666");
+        _credentials.Setup(c => c.GetUser(other)).Returns(new SimklUser("token-without-id", syncMovies: true, syncShows: true));
+        _credentials.Setup(c => c.GetClientId("token-without-id")).Returns((string?)null);
+
+        await _processor.ProcessAsync([Marks.Movie("tt9", user: other), Marks.Movie("tt1")], Token);
+
+        _credentials.Verify(c => c.GetClientId("token-a"), Times.Once);
+        var (_, user) = Assert.Single(_added);
+        Assert.Equal("token-a", user.Token);
     }
 
     /// <summary>
@@ -326,7 +345,7 @@ public sealed class MarkSyncProcessorTests
     [Fact]
     public void ClaimsNoReadinessWithoutAClientId()
     {
-        _credentials.Setup(c => c.GetClientId()).Returns((string?)null);
+        _credentials.Setup(c => c.GetClientId(It.IsAny<string>())).Returns((string?)null);
 
         _processor.LogReadiness();
 

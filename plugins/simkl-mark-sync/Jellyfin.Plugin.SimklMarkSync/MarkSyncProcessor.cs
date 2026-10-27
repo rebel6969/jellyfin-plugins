@@ -55,7 +55,8 @@ public sealed class MarkSyncProcessor
     /// </summary>
     public void LogReadiness()
     {
-        if (_credentials.GetClientId() is not null)
+        // Any token answers once the official plugin exposes its client IDs; an empty one stands for a pin flow login.
+        if (_credentials.GetClientId(string.Empty) is not null)
         {
             _logger.LogInformation("Simkl Mark Sync is ready: found the official Simkl plugin's client ID");
         }
@@ -79,10 +80,10 @@ public sealed class MarkSyncProcessor
                 continue;
             }
 
-            var clientId = _credentials.GetClientId();
+            var clientId = _credentials.GetClientId(user.Token);
             if (clientId is null)
             {
-                return;
+                continue;
             }
 
             // The last mark of an item wins, so marking and then unmarking within one batch sends only the unmark.

@@ -60,6 +60,14 @@
     "category": "General",
     "versions": [
       {
+        "version": "1.3.0.0",
+        "targetAbi": "12.1.0.0",
+        "changelog": "Works with the official Simkl plugin 10: each login is sent with the client ID it was issued to (the pin flow's or the new OAuth 2 device flow's), and a login whose client ID cannot be told is skipped without holding up other users.",
+        "sourceUrl": "https://github.com/rebel6969/jellyfin-plugins/releases/download/simkl-mark-sync-v1.3.0.0/simkl-mark-sync_1.3.0.0.zip",
+        "checksum": "dc2ed09ee8c6f6ed27dd4eabc6a17aa7",
+        "timestamp": "2026-10-27T00:06:09.082194+00:00"
+      },
+      {
         "version": "1.2.0.0",
         "targetAbi": "12.1.0.0",
         "changelog": "Anime episodes Simkl cannot match by TVDB numbering (its catalogue files them under the wrong TVDB season) are placed through Simkl's own catalogue and sent by Simkl's own title and episode numbers, so the watch is not lost. An episode is placed only when exactly one fits by its TVDB coordinate, or by its position and air date.",
@@ -88,11 +96,19 @@
   {
     "guid": "07caef58-a94b-4211-a62c-f9774e04ebdb",
     "name": "Simkl",
-    "description": "The official Simkl scrobbler (v9) with one fix: a playback started again shortly after a stop is scrobbled. Same plugin ID as the official plugin.",
+    "description": "The official Simkl scrobbler (v10) with one change: a start reported again mid-playback does not re-send the start. Same plugin ID as the official plugin.",
     "overview": "Scrobble to Simkl",
     "owner": "rebel6969",
     "category": "General",
     "versions": [
+      {
+        "version": "10.0.1.0",
+        "targetAbi": "12.2.0.0",
+        "changelog": "Official v10 (it fixes the lost replay that 9.1.0.0 fixed) plus one change: a start reported again for the item whose scrobble is still open, as on a track change or a transcode restart, no longer re-sends the start to Simkl.",
+        "sourceUrl": "https://github.com/rebel6969/jellyfin-plugins/releases/download/simkl-v10.0.1.0/simkl_10.0.1.0.zip",
+        "checksum": "11371e1f29ca32aff1be24f08f4dbfe0",
+        "timestamp": "2026-10-27T00:06:09.082194+00:00"
+      },
       {
         "version": "9.1.0.0",
         "targetAbi": "12.2.0.0",

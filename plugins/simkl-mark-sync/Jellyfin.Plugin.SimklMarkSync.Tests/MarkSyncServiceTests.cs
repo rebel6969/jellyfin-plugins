@@ -41,7 +41,7 @@ public sealed class MarkSyncServiceTests : IDisposable
     /// </summary>
     public MarkSyncServiceTests()
     {
-        _credentials.Setup(c => c.GetClientId()).Returns("fixture-client-id");
+        _credentials.Setup(c => c.GetClientId(It.IsAny<string>())).Returns("fixture-client-id");
         _credentials.Setup(c => c.GetUser(Marks.User)).Returns(new SimklUser("token-a", syncMovies: true, syncShows: true));
         _client
             .Setup(c => c.AddToHistoryAsync(It.IsAny<HistoryRequest>(), It.IsAny<string>(), It.IsAny<SimklUser>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
@@ -142,7 +142,7 @@ public sealed class MarkSyncServiceTests : IDisposable
     {
         await _service.StartAsync(Token);
         _userData.VerifyAdd(m => m.UserDataSaved += It.IsAny<EventHandler<UserDataSaveEventArgs>>(), Times.Once);
-        _credentials.Verify(c => c.GetClientId(), Times.Once);
+        _credentials.Verify(c => c.GetClientId(It.IsAny<string>()), Times.Once);
 
         await _service.StopAsync(Token);
 

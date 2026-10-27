@@ -138,15 +138,16 @@ public sealed class SimklCredentialsTests : IDisposable
     }
 
     /// <summary>
-    /// The client ID is read from the loaded official plugin's assembly and kept.
+    /// The client ID is read from the loaded official plugin's assembly and kept. This fixture assembly has version
+    /// 9's shape, one client ID for every login.
     /// </summary>
     [Fact]
     public void ReadsTheClientIdFromTheLoadedOfficialPlugin()
     {
         SetOfficialPlugin(new FakeSimklPlugin(_paths.Object));
 
-        Assert.Equal(Jellyfin.Plugin.Simkl.API.SimklApi.Apikey, _credentials.GetClientId());
-        Assert.Equal(Jellyfin.Plugin.Simkl.API.SimklApi.Apikey, _credentials.GetClientId());
+        Assert.Equal(Jellyfin.Plugin.Simkl.API.SimklApi.Apikey, _credentials.GetClientId("token-a"));
+        Assert.Equal(Jellyfin.Plugin.Simkl.API.SimklApi.Apikey, _credentials.GetClientId(V10.UserConfig.OAuth2Prefix + "b"));
         _pluginManager.Verify(m => m.GetPlugin(SimklCredentials.OfficialPluginId, null), Times.Once);
     }
 
@@ -156,7 +157,7 @@ public sealed class SimklCredentialsTests : IDisposable
     [Fact]
     public void HasNoClientIdWithoutTheOfficialPlugin()
     {
-        Assert.Null(_credentials.GetClientId());
+        Assert.Null(_credentials.GetClientId("token-a"));
         Assert.Contains("not installed", Assert.Single(_logger.At(LogLevel.Warning)), StringComparison.Ordinal);
     }
 
@@ -168,7 +169,7 @@ public sealed class SimklCredentialsTests : IDisposable
     {
         SetOfficialPlugin(null);
 
-        Assert.Null(_credentials.GetClientId());
+        Assert.Null(_credentials.GetClientId("token-a"));
         Assert.Single(_logger.At(LogLevel.Warning));
     }
 
@@ -180,7 +181,7 @@ public sealed class SimklCredentialsTests : IDisposable
     {
         SetOfficialPlugin(Mock.Of<IPlugin>());
 
-        Assert.Null(_credentials.GetClientId());
+        Assert.Null(_credentials.GetClientId("token-a"));
         Assert.Contains(SimklCredentials.ApiTypeName, Assert.Single(_logger.At(LogLevel.Error)), StringComparison.Ordinal);
     }
 
@@ -190,7 +191,47 @@ public sealed class SimklCredentialsTests : IDisposable
     [Fact]
     public void ReadsNoClientIdFromAnotherAssembly()
     {
-        Assert.Null(SimklCredentials.ReadClientId(typeof(object).Assembly));
+        Assert.Null(SimklCredentials.ReadClientIds(typeof(object).Assembly));
+    }
+
+    /// <summary>
+    /// Version 9 has one client ID, which serves every login whatever its token looks like.
+    /// </summary>
+    [Fact]
+    public void Version9GivesItsOneClientIdToEveryLogin()
+    {
+        var ids = SimklCredentials.ReadClientIds(typeof(Jellyfin.Plugin.Simkl.API.SimklApi), userConfigType: null)!;
+
+        Assert.Equal(Jellyfin.Plugin.Simkl.API.SimklApi.Apikey, ids.For("token-a"));
+        Assert.Equal(Jellyfin.Plugin.Simkl.API.SimklApi.Apikey, ids.For(V10.UserConfig.OAuth2Prefix + "b"));
+        Assert.Null(ids.OAuth2);
+    }
+
+    /// <summary>
+    /// Version 10 issues device flow logins to its OAuth 2 client ID and keeps the pin flow one for older logins,
+    /// telling them apart with its own token test.
+    /// </summary>
+    [Fact]
+    public void Version10PicksTheClientIdTheTokenWasIssuedTo()
+    {
+        var ids = SimklCredentials.ReadClientIds(typeof(V10.SimklApi), typeof(V10.UserConfig))!;
+
+        Assert.Equal(V10.SimklApi.ApikeyLegacy, ids.For("token-a"));
+        Assert.Equal(V10.SimklApi.ApikeyOAuth2, ids.For(V10.UserConfig.OAuth2Prefix + "b"));
+    }
+
+    /// <summary>
+    /// With version 10's two client IDs but no usable token test, which ID a login belongs to cannot be told, so
+    /// none is given rather than a guess that Simkl would reject.
+    /// </summary>
+    [Fact]
+    public void Version10WithoutATokenTestGivesNoClientId()
+    {
+        var noTest = SimklCredentials.ReadClientIds(typeof(V10.SimklApi), userConfigType: null)!;
+        var oddTest = SimklCredentials.ReadClientIds(typeof(V10.SimklApi), typeof(V10.OddUserConfig))!;
+
+        Assert.Null(noTest.For("token-a"));
+        Assert.Null(oddTest.For(V10.UserConfig.OAuth2Prefix + "b"));
     }
 
     /// <summary>

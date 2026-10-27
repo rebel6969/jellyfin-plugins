@@ -46,7 +46,7 @@ public sealed class CatalogFallbackTests : IDisposable
         var factory = new Mock<IHttpClientFactory>();
         factory.Setup(f => f.CreateClient(NamedClient.Default)).Returns(_httpClient);
         var credentials = new Mock<ISimklCredentials>();
-        credentials.Setup(c => c.GetClientId()).Returns(ClientId);
+        credentials.Setup(c => c.GetClientId(It.IsAny<string>())).Returns(ClientId);
         credentials.Setup(c => c.GetUser(Marks.User)).Returns(User);
         var client = new SimklClient(factory.Object, _clock, new ListLogger<SimklClient>());
         _processor = new MarkSyncProcessor(credentials.Object, client, new FakeSettings(), _clock, _logger);

@@ -4,8 +4,8 @@ A Jellyfin server plugin that sends to [Simkl](https://simkl.com) the movies and
 unplayed by hand**, and **every playback Jellyfin counts as finished**. It completes the official Simkl plugin, which
 only scrobbles playback and can miss one.
 
-Built and tested against **Jellyfin 12.1** (`targetAbi 12.1.0.0`, .NET 10) and the official **Simkl plugin 9.0.0.0**
-(also with this repository's [9.1.0.0 build](../simkl) of it).
+Built and tested against **Jellyfin 12.1** (`targetAbi 12.1.0.0`, .NET 10; runs on 12.3) and the official **Simkl
+plugin 9 and 10** (also with this repository's [10.0.1.0 build](../simkl) of it).
 
 ## Why
 
@@ -96,6 +96,11 @@ episode. An episode that does not fit is logged with the reason and left alone, 
 - Calls use the client ID of the installed official plugin, because Simkl ties each login to the client ID it was
   issued to. The plugin reads that ID from the loaded Simkl plugin at runtime and does not bundle a copy. Simkl
   documents a client ID as a public identifier, not a secret.
+- Version 10 of the official plugin has two client IDs: the old one (`ApikeyLegacy`) for logins from the retired pin
+  flow, and `ApikeyOAuth2` for logins from its OAuth 2 device flow. Since 1.3.0.0 each login is sent with the ID its
+  token was issued to, told apart by the official plugin's own `UserConfig.IsOAuth2Token`. Version 9's single
+  `Apikey` serves every login. A login whose ID cannot be told is skipped with an error naming what is missing, and the
+  other users in the batch are still sent.
 
 ## Install
 
@@ -111,9 +116,9 @@ Then install **Simkl Mark Sync** from the catalog and restart Jellyfin.
 
 ### Manually
 
-1. Download `simkl-mark-sync_1.2.0.0.zip` from the
-   [releases](https://github.com/rebel6969/jellyfin-plugins/releases/tag/simkl-mark-sync-v1.2.0.0).
-2. Extract it into `<jellyfin data dir>/plugins/Simkl Mark Sync_1.2.0.0/`.
+1. Download `simkl-mark-sync_1.3.0.0.zip` from the
+   [releases](https://github.com/rebel6969/jellyfin-plugins/releases/tag/simkl-mark-sync-v1.3.0.0).
+2. Extract it into `<jellyfin data dir>/plugins/Simkl Mark Sync_1.3.0.0/`.
 3. Restart Jellyfin.
 
 ### Check that it is active

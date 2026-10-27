@@ -10,13 +10,15 @@ using Microsoft.Extensions.Logging;
 namespace Jellyfin.Plugin.SimklMarkSync.Simkl;
 
 /// <summary>
-/// Reads the client ID and user logins from the official Simkl plugin, so users link Simkl once, in that plugin.
+/// Reads the client IDs and user logins from the official Simkl plugin, so users link Simkl once, in that plugin.
 /// </summary>
 /// <remarks>
 /// Simkl ties an access token to the client ID it was issued to, so the plugin must use the official plugin's client
-/// ID. It is read from that plugin's loaded assembly rather than copied. Simkl documents a client ID as a public
-/// identifier, not a secret. Only the single <see cref="MarkSyncService"/> worker calls this class, so it keeps its
-/// caches without locks.
+/// ID for each login. Version 9 has one ID. Version 10 keeps that ID for logins from the old pin flow and issues
+/// logins from its OAuth 2 device flow to a second one, telling the two apart with its own token test. All of it is
+/// read from that plugin's loaded assembly rather than copied. Simkl documents a client ID as a public identifier, not
+/// a secret. Only the single <see cref="MarkSyncService"/> worker calls this class, so it keeps its caches without
+/// locks.
 /// </remarks>
 public sealed class SimklCredentials : ISimklCredentials
 {
@@ -31,9 +33,29 @@ public sealed class SimklCredentials : ISimklCredentials
     public const string ApiTypeName = "Jellyfin.Plugin.Simkl.API.SimklApi";
 
     /// <summary>
-    /// The official plugin's client ID field.
+    /// The official plugin's per-user settings class, which holds its token test from version 10.
+    /// </summary>
+    public const string UserConfigTypeName = "Jellyfin.Plugin.Simkl.Configuration.UserConfig";
+
+    /// <summary>
+    /// Version 9's client ID field, the one ID it issues every login to.
     /// </summary>
     public const string ClientIdFieldName = "Apikey";
+
+    /// <summary>
+    /// Version 10's client ID field for pin flow logins; it holds the same ID as version 9's.
+    /// </summary>
+    public const string LegacyClientIdFieldName = "ApikeyLegacy";
+
+    /// <summary>
+    /// Version 10's client ID field for logins from its OAuth 2 device flow.
+    /// </summary>
+    public const string OAuth2ClientIdFieldName = "ApikeyOAuth2";
+
+    /// <summary>
+    /// Version 10's static method that tells a device flow token from a pin flow one.
+    /// </summary>
+    public const string IsOAuth2TokenMethodName = "IsOAuth2Token";
 
     /// <summary>
     /// The official Simkl plugin's identifier.
@@ -45,7 +67,8 @@ public sealed class SimklCredentials : ISimklCredentials
     private readonly IPluginManager _pluginManager;
     private readonly string _configurationPath;
     private readonly ILogger<SimklCredentials> _logger;
-    private string? _clientId;
+    private SimklClientIds? _clientIds;
+    private Version? _pluginVersion;
     private XDocument? _configuration;
     private DateTime _configurationWriteTime;
     private long _configurationLength;
@@ -65,31 +88,26 @@ public sealed class SimklCredentials : ISimklCredentials
     }
 
     /// <inheritdoc />
-    public string? GetClientId()
+    public string? GetClientId(string token)
     {
-        if (_clientId is not null)
+        var ids = GetClientIds();
+        if (ids is null)
         {
-            return _clientId;
-        }
-
-        var plugin = _pluginManager.GetPlugin(OfficialPluginId);
-        if (plugin?.Instance is null)
-        {
-            _logger.LogWarning("Marks are not sent to Simkl: the official Simkl plugin is not installed or did not load");
             return null;
         }
 
-        _clientId = ReadClientId(plugin.Instance.GetType().Assembly);
-        if (_clientId is null)
+        var clientId = ids.For(token);
+        if (clientId is null)
         {
             _logger.LogError(
-                "Marks are not sent to Simkl: Simkl plugin {Version} has no {Type}.{Field}, where this plugin reads its client ID",
-                plugin.Version,
-                ApiTypeName,
-                ClientIdFieldName);
+                "Marks are not sent to Simkl: Simkl plugin {Version} has the OAuth 2 client ID {Field} but no {Type}.{Method} to tell which client ID a login belongs to",
+                _pluginVersion,
+                OAuth2ClientIdFieldName,
+                UserConfigTypeName,
+                IsOAuth2TokenMethodName);
         }
 
-        return _clientId;
+        return clientId;
     }
 
     /// <inheritdoc />
@@ -100,22 +118,42 @@ public sealed class SimklCredentials : ISimklCredentials
     }
 
     /// <summary>
-    /// Reads the client ID from the official Simkl plugin's assembly.
+    /// Reads the client IDs from the official Simkl plugin's assembly.
     /// </summary>
     /// <param name="assembly">The official plugin's assembly.</param>
-    /// <returns>The client ID, or <c>null</c> when the assembly does not have it.</returns>
-    public static string? ReadClientId(Assembly assembly)
+    /// <returns>The client IDs, or <c>null</c> when the assembly does not have them.</returns>
+    public static SimklClientIds? ReadClientIds(Assembly assembly)
     {
         ArgumentNullException.ThrowIfNull(assembly);
-        var field = assembly.GetType(ApiTypeName, throwOnError: false)
-            ?.GetField(ClientIdFieldName, BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
-        if (field is null)
+        return ReadClientIds(
+            assembly.GetType(ApiTypeName, throwOnError: false),
+            assembly.GetType(UserConfigTypeName, throwOnError: false));
+    }
+
+    /// <summary>
+    /// Reads the client IDs from the official plugin's API class and its token test from its settings class.
+    /// </summary>
+    /// <param name="apiType">The official plugin's API class, if it has one.</param>
+    /// <param name="userConfigType">The official plugin's per-user settings class, if it has one.</param>
+    /// <returns>The client IDs, or <c>null</c> when the API class has neither a pin flow nor a version 9 client ID.</returns>
+    public static SimklClientIds? ReadClientIds(Type? apiType, Type? userConfigType)
+    {
+        if (apiType is null)
         {
             return null;
         }
 
-        var value = field.IsLiteral ? field.GetRawConstantValue() : field.GetValue(null);
-        return value is string id && !string.IsNullOrWhiteSpace(id) ? id : null;
+        var legacy = ReadString(apiType, LegacyClientIdFieldName) ?? ReadString(apiType, ClientIdFieldName);
+        if (legacy is null)
+        {
+            return null;
+        }
+
+        var test = userConfigType?.GetMethod(IsOAuth2TokenMethodName, BindingFlags.Public | BindingFlags.Static, [typeof(string)]);
+        Func<string, bool>? isOAuth2Token = test is null || test.ReturnType != typeof(bool)
+            ? null
+            : token => test.Invoke(null, [token]) is true;
+        return new SimklClientIds(legacy, ReadString(apiType, OAuth2ClientIdFieldName), isOAuth2Token);
     }
 
     /// <summary>
@@ -147,6 +185,47 @@ public sealed class SimklCredentials : ISimklCredentials
     // The official plugin defaults both switches to on.
     private static bool ReadSwitch(XElement userConfig, string name) =>
         !bool.TryParse((string?)userConfig.Element(name), out var value) || value;
+
+    private static string? ReadString(Type type, string fieldName)
+    {
+        var field = type.GetField(fieldName, BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+        if (field is null)
+        {
+            return null;
+        }
+
+        var value = field.IsLiteral ? field.GetRawConstantValue() : field.GetValue(null);
+        return value is string id && !string.IsNullOrWhiteSpace(id) ? id : null;
+    }
+
+    private SimklClientIds? GetClientIds()
+    {
+        if (_clientIds is not null)
+        {
+            return _clientIds;
+        }
+
+        var plugin = _pluginManager.GetPlugin(OfficialPluginId);
+        if (plugin?.Instance is null)
+        {
+            _logger.LogWarning("Marks are not sent to Simkl: the official Simkl plugin is not installed or did not load");
+            return null;
+        }
+
+        _pluginVersion = plugin.Version;
+        _clientIds = ReadClientIds(plugin.Instance.GetType().Assembly);
+        if (_clientIds is null)
+        {
+            _logger.LogError(
+                "Marks are not sent to Simkl: Simkl plugin {Version} has neither {LegacyField} nor {Field} on {Type}, where this plugin reads its client ID",
+                plugin.Version,
+                LegacyClientIdFieldName,
+                ClientIdFieldName,
+                ApiTypeName);
+        }
+
+        return _clientIds;
+    }
 
     private XDocument? LoadConfiguration()
     {

@@ -47,6 +47,16 @@ public sealed class PlaybackScrobblerRestartTests : IAsyncLifetime
         ProviderIds = new Dictionary<string, string> { ["Tmdb"] = "1058424", ["Imdb"] = "tt27369017" },
     };
 
+    private readonly BaseItemDto _otherMovie = new()
+    {
+        Id = Guid.Parse("2b7e3c41-5a0f-4d6e-9c8b-1f2a3b4c5d6e"),
+        Name = "Blade Runner 2049",
+        Type = BaseItemKind.Movie,
+        ProductionYear = 2017,
+        RunTimeTicks = TimeSpan.FromMinutes(164).Ticks,
+        ProviderIds = new Dictionary<string, string> { ["Tmdb"] = "335984", ["Imdb"] = "tt1856101" },
+    };
+
     private SessionInfo _session = null!;
     private PlaybackScrobbler _scrobbler = null!;
 
@@ -55,7 +65,9 @@ public sealed class PlaybackScrobblerRestartTests : IAsyncLifetime
         var paths = new Mock<IApplicationPaths>();
         paths.SetupGet(p => p.PluginConfigurationsPath).Returns(_configDir);
         paths.SetupGet(p => p.PluginsPath).Returns(_configDir);
-        var plugin = new SimklPlugin(paths.Object, Mock.Of<IXmlSerializer>());
+        var xml = new Mock<IXmlSerializer>();
+        xml.Setup(x => x.DeserializeFromFile(typeof(PluginConfiguration), It.IsAny<string>())).Returns(() => new PluginConfiguration { UserConfigs = [new UserConfig { Id = UserId, UserToken = "test-token" }] });
+        var plugin = new SimklPlugin(paths.Object, xml.Object);
         plugin.UpdateConfiguration(new PluginConfiguration
         {
             UserConfigs = [new UserConfig { Id = UserId, UserToken = "test-token" }],
@@ -63,7 +75,9 @@ public sealed class PlaybackScrobblerRestartTests : IAsyncLifetime
 
         var factory = new Mock<IHttpClientFactory>();
         factory.Setup(f => f.CreateClient(It.IsAny<string>())).Returns(() => new HttpClient(_simkl, disposeHandler: false));
-        var api = new SimklApi(NullLogger<SimklApi>.Instance, factory.Object);
+        var appHost = new Mock<MediaBrowser.Controller.IServerApplicationHost>();
+        appHost.SetupGet(h => h.ApplicationVersionString).Returns("12.3.0");
+        var api = new SimklApi(NullLogger<SimklApi>.Instance, factory.Object, appHost.Object);
 
         _session = new SessionInfo(_sessionManager.Object, NullLogger.Instance)
         {
@@ -71,7 +85,8 @@ public sealed class PlaybackScrobblerRestartTests : IAsyncLifetime
             UserId = UserId,
             UserName = "admin",
         };
-        _scrobbler = new PlaybackScrobbler(_sessionManager.Object, NullLogger<PlaybackScrobbler>.Instance, api, Mock.Of<ILibraryManager>());
+        var relogin = new ReloginNudge(_sessionManager.Object, NullLogger<ReloginNudge>.Instance);
+        _scrobbler = new PlaybackScrobbler(_sessionManager.Object, NullLogger<PlaybackScrobbler>.Instance, api, Mock.Of<ILibraryManager>(), relogin);
         await _scrobbler.StartAsync(TestContext.Current.CancellationToken);
     }
 
@@ -113,10 +128,27 @@ public sealed class PlaybackScrobblerRestartTests : IAsyncLifetime
     {
         await PlayUntilStartedAsync();
 
-        RaiseStart(5);
-        await KeepReportingAsync(TimeSpan.FromSeconds(7), () => RaiseProgress(6));
+        // The start is repeated where playback is, with no jump: version 10 reports a settled seek as a new
+        // start on purpose, so a position change here would be a second, wanted call.
+        RaiseStart(0.1);
+        await KeepReportingAsync(TimeSpan.FromSeconds(7), () => RaiseProgress(0.1));
 
         Assert.Equal(1, _simkl.Count(Start));
+    }
+
+    /// <summary>
+    /// The open-scrobble guard keeps only the same item: another item started on the session while one is
+    /// open (the next episode starting before the last one's stop arrives) is reported at once, from the
+    /// start event alone.
+    /// </summary>
+    [Fact]
+    public async Task AStartOfAnotherItemWhileOneIsOpenIsReportedAtOnce()
+    {
+        await PlayUntilStartedAsync();
+
+        RaiseStart(1, _otherMovie);
+
+        Assert.True(await WaitForAsync(() => _simkl.Count(Start) == 2), "the other item's start was not sent");
     }
 
     [Fact]
@@ -186,11 +218,11 @@ public sealed class PlaybackScrobblerRestartTests : IAsyncLifetime
 
     private long Ticks(double percent) => (long)(_movie.RunTimeTicks!.Value * percent / 100);
 
-    private void RaiseStart(double percent) =>
+    private void RaiseStart(double percent, BaseItemDto? item = null) =>
         _sessionManager.Raise(m => m.PlaybackStart += null, _sessionManager.Object, new PlaybackProgressEventArgs
         {
             Session = _session,
-            MediaInfo = _movie,
+            MediaInfo = item ?? _movie,
             PlaybackPositionTicks = Ticks(percent),
         });
 

@@ -3,47 +3,58 @@
 
 ###
 
-## About this build (9.1.0.0)
+## About this build (10.0.1.0)
 
-This folder is the official [jellyfin-plugin-simkl](https://github.com/jellyfin/jellyfin-plugin-simkl) at tag `v9`
-(commit `82b3695`), with one fix. It keeps the official plugin's ID, so it installs over 9.0.0.0 and Jellyfin replaces
-it with any later official release.
+This folder is the official [jellyfin-plugin-simkl](https://github.com/jellyfin/jellyfin-plugin-simkl) at tag `v10`
+(commit `6faee47`), with one change. It keeps the official plugin's ID, so it installs over 10.0.0.0.
 
-**The fix: a playback started again shortly after a stop is now scrobbled.** Version 9 keeps one scrobble state per
-Jellyfin session. A session ID is reused across playbacks, and once a state reached "stopped" it ignored every later
-event for the same item until five minutes passed with no progress at all. So stopping a movie, starting it again within
-those five minutes (to restart it, or to reopen it with another audio or subtitle track) and watching it to the end sent
-nothing to Simkl, not even the final stop, and logged nothing. On 2026-10-13 that lost a full watch: the client
-stopped at 0.4%, started again 24 seconds later and stopped at 100%. Upstream issue
-[#71](https://github.com/jellyfin/jellyfin-plugin-simkl/issues/71) reports the same symptom.
+**What happened to the 9.1.0.0 fix.** 9.1.0.0 fixed a lost watch: version 9 ignored a playback started again shortly
+after a stop, and its final stop, so on 2026-10-13 a whole movie never reached Simkl. Version 10 fixes that itself: its
+scrobbler listens to Jellyfin's playback start and rebinds the session's state there. This folder's test project proves
+it. Unmodified `v10` passes the replay test, the retry of an item the scrobbler gave up on, and the check that progress
+after a finished playback opens no new scrobble.
 
-This build also listens to Jellyfin's playback start event. A start resets the session's state unless a scrobble of
-the item is still open (a client that reports a start again mid-playback causes no extra calls), and it also retries an
-item the plugin had given up on. A stop ignored for an already finished playback is now logged at debug level.
+**The change: a start reported again mid-playback no longer re-sends the start.** Version 10 rebinds and reports on
+every playback start. A client also reports a start for the item already playing when it changes an audio or subtitle
+track or a transcode restarts the stream. Version 10 then sends Simkl a second start, and the reset position reads as a
+seek, which sends a third. 9.1.0.0 left such a scrobble alone, and this build does the same on version 10. A start for
+an item whose scrobble is still open (started or paused, not given up on) only refreshes the session's last-seen time.
+A finished, given-up or different item is rebound and reported at once, as in version 10.
 
-The same change is offered upstream as
-[jellyfin/jellyfin-plugin-simkl#74](https://github.com/jellyfin/jellyfin-plugin-simkl/pull/74).
+Changed file: `Services/PlaybackScrobbler.cs`. The test project `Jellyfin.Plugin.Simkl.Tests` (upstream has none)
+drives the scrobbler through Jellyfin's session events against a fake Simkl in real time, five tests, about 30 s:
 
-Changed files: `Services/PlaybackScrobbler.cs` and `Services/SessionScrobbleTracker.cs`. New: the test project
-`Jellyfin.Plugin.Simkl.Tests` (upstream has none). It drives the scrobbler through Jellyfin's session events against a
-fake Simkl in real time (the plugin spaces calls 5 s apart, so the four tests take about 45 s). Unmodified upstream `v9`
-fails two of them, and each of three mutants of the fix fails a named test.
+- Unmodified `v10` fails only the mid-playback start test, which expects 1 start and gets 3.
+- A mutant that removes the guard is caught by that test.
+- Dropping the guard's item check is caught by the other-item test.
+- Dropping its given-up check is caught by the retry test.
+- Dropping its state check is caught by the replay test.
 
-The build is pinned to Jellyfin.Controller 12.2.0 (upstream floats on `12.*-*`) and targets ABI 12.2.0.0.
+The build is pinned to Jellyfin.Controller 12.2.0 (upstream floats on `12.*-*`, which now resolves a 12.4 package) and
+targets ABI 12.2.0.0.
 
 ```
 dotnet build Jellyfin.Plugin.Simkl.sln -c Release
 dotnet test Jellyfin.Plugin.Simkl.Tests/Jellyfin.Plugin.Simkl.Tests.csproj -c Release
 ```
 
-The [Simkl Mark Sync](../simkl-mark-sync) plugin also sends every playback Jellyfin counts as finished to Simkl, so a
-watch reaches Simkl even if a future official release brings the problem back.
+The [Simkl Mark Sync](../simkl-mark-sync) plugin works with this build and with the official 9 and 10. From version
+10 the official plugin has two client IDs, and Mark Sync 1.3.0.0 picks the one each login belongs to.
 
-## Current features
-- Multi-user support
-- Auto scrobble Movies and TV Shows at given percentage to Simkl
-- Easy login using pin
-- If scrobbling fails, search it using filename using Simkl's API and then scrobble it
+## Features
+- Multi-user: every user connects their own Simkl account
+- Reports play, pause and stop to Simkl as they happen, so your profile shows what you are watching now
+- Marks an item as watched when playback stops past 80%; stopping earlier saves your position on Simkl, where the Playback Progress Manager lists it
+- Mirrors marking played or unplayed in Jellyfin to your Simkl history, and can be switched off per user
+- Imports your Simkl watch history into Jellyfin, on demand or on a schedule, with the date you watched each item
+- Logs a rewatch when you finish something already in your history (needs Simkl Pro or VIP)
+- Identifies an item by its file name when Simkl cannot match it by id
+- Skips anything shorter than a runtime you choose
 
-## Future features
-- Sync all watch status with Simkl
+## Setup
+Open Dashboard, then Plugins, then Simkl. Pick a user, click Log In, and enter the code it shows at
+[simkl.com/pin](https://simkl.com/pin).
+
+Jellyfin serves plugin settings to administrators only, so an administrator connects each user's account from
+that one page. Accounts connected with the older sign-in keep working and can be reconnected from the same
+page whenever convenient.

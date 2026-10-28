@@ -604,9 +604,11 @@ class MainTests(unittest.TestCase):
         self.jellyfin = FakeJellyfin()
         self.trakt = FakeTrakt()
 
-    def http(self, base: str, headers: dict[str, str], spacing: float) -> Any:
+    def http(self, base: str, headers: dict[str, str], spacing: float, deadline: float | None = None) -> Any:
         if base == MOD.TRAKT_URL:
             self.assertEqual(headers["Authorization"], "Bearer SECRET-TOKEN")
+            # Every Trakt client gets the run's time budget, so a long Retry-After ends the run instead of outlasting it.
+            self.assertIsNotNone(deadline)
             if headers["trakt-api-key"] != "d" * 64:
                 return mock.Mock(
                     call=mock.Mock(side_effect=MOD.ApiError("GET /users/settings: HTTP 403: invalid API key"))
@@ -705,6 +707,27 @@ class MainTests(unittest.TestCase):
         self.assertEqual(json.loads((self.state_dir / "state.json").read_text())["client_id"], "d" * 64)
         self.assertIn("failed", telegram.call_args.args[0])
 
+    def test_regression_a_rate_limited_run_exits_0_without_an_alert(self) -> None:
+        # 2026-10-28: Trakt's Cloudflare edge answered error 1015 during a burst of plays; the run failed and alerted,
+        # although the next run finished the work from the progress it had saved.
+        limited = MOD.RateLimited("GET /search/tvdb/434704: HTTP 429 (Retry-After 600 s)")
+        err = io.StringIO()
+        with (
+            mock.patch.dict(os.environ, self.env),
+            mock.patch.object(MOD, "STATE_DIR", str(self.state_dir)),
+            mock.patch.object(MOD, "Http", side_effect=self.http),
+            mock.patch.object(self.trakt, "call", side_effect=limited),
+            mock.patch.object(MOD, "send_telegram") as telegram,
+            mock.patch.object(MOD.time, "time", return_value=at("2026-10-05T06:00:00+00:00")),
+            mock.patch.object(MOD.time, "sleep"),
+            redirect_stderr(err),
+        ):
+            self.assertEqual(MOD.main(["--apply"]), 0)
+        telegram.assert_not_called()
+        state = json.loads((self.state_dir / "state.json").read_text())
+        self.assertEqual(state["rate_limited_since"], at("2026-10-05T06:00:00+00:00"))
+        self.assertIn("deferred=1", err.getvalue())
+
 
 class Stopped(Exception):
     """Stands in for systemd stopping a run in the middle."""
@@ -747,6 +770,57 @@ class BudgetAndProgressTests(FillBase):
             self.run_fill(checkpoint=lambda: saved.append(copy.deepcopy(self.state)))
         self.assertEqual(len(saved), 2)
         self.assertIn(f"{USER}:{ITEM['Id']}:2026-10-05T05:29:52.000Z", saved[-1]["done"])
+
+
+class RateLimitTests(FillBase):
+    """Two plays of the 2026-10-05 episode; Trakt answers the first history check and rate-limits every later one."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        second = copy.deepcopy(ITEM)
+        second["Id"] = "0b1b5d77a1f84b6aa3a3a30cbd1f7c11"
+        second["UserData"]["LastPlayedDate"] = "2026-10-05T05:10:00.0000000Z"
+        self.jellyfin.items.append(second)
+        self.trakt.history[14531280] = [history_row(1, 26, "2026-10-05T05:33:00.000Z", 14531280)]
+        answer = self.trakt.call
+        history_calls = 0
+
+        def limit_after_the_first_history_check(
+            method: str, path: str, query: dict[str, str] | None = None, body: Any = None
+        ) -> Any:
+            nonlocal history_calls
+            if path.startswith("/sync/history/episodes/"):
+                history_calls += 1
+                if history_calls >= 2:
+                    raise MOD.RateLimited("GET /sync/history/episodes/14531280: HTTP 429 (Retry-After 600 s)")
+            return answer(method, path, query, body)
+
+        patcher = mock.patch.object(self.trakt, "call", side_effect=limit_after_the_first_history_check)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_regression_a_rate_limit_leaves_the_rest_for_the_next_run(self) -> None:
+        # 2026-10-28: the run failed on Trakt's error 1015 although the next run, 15 minutes later, finished the work.
+        tally = self.run_fill()
+        self.assertEqual((tally["on_trakt"], tally["deferred"]), (1, 1))
+        self.assertIn(f"{USER}:{ITEM['Id']}:2026-10-05T05:29:52.000Z", self.state["done"])
+        self.assertEqual(self.state["rate_limited_since"], self.now)
+        self.assertIn("rate limiting this host; the next run carries on (1 played episodes not yet checked)", self.log)
+        self.assertEqual(self.notes, [])
+
+    def test_a_run_without_a_rate_limit_clears_the_record_of_one(self) -> None:
+        self.jellyfin.items.pop()
+        self.state["rate_limited_since"] = self.now - 1800.0
+        self.assertEqual(self.run_fill()["deferred"], 0)
+        self.assertNotIn("rate_limited_since", self.state)
+
+    def test_rate_limiting_is_an_error_only_once_every_run_for_an_hour_had_it(self) -> None:
+        self.state["rate_limited_since"] = self.now - 3599.0
+        self.assertEqual(self.run_fill()["deferred"], 1)
+        self.assertEqual(self.state["rate_limited_since"], self.now - 3599.0)
+        self.state["rate_limited_since"] = self.now - 3600.0
+        with self.assertRaisesRegex(MOD.ApiError, "rate-limited every run since 2026-10-05T05:00:00.000Z"):
+            self.run_fill()
 
 
 class HttpTests(unittest.TestCase):
@@ -800,6 +874,49 @@ class HttpTests(unittest.TestCase):
         self.addCleanup(api.close)
         self.assertEqual((api.call("GET", "/a"), api.call("GET", "/b")), ({}, {"ok": True}))
         self.assertEqual((len(connections), slept), (2, [0.0, 0.0]))
+
+    def limited(self, seconds: str) -> tuple[int, dict[str, str], bytes]:
+        # Trakt's Cloudflare edge answered like this on 2026-10-28 (error 1015, JSON).
+        return 429, {"Retry-After": seconds}, b'{"title":"Error 1015: You are being rate limited","status":429}'
+
+    def budgeted(self, base: str, slept: list[float]) -> Any:
+        api = MOD.Http(base, {}, 0.0, sleep=slept.append, clock=lambda: 1000.0, deadline=1300.0)
+        self.addCleanup(api.close)
+        return api
+
+    def test_regression_a_429_is_waited_out_for_its_full_retry_after_when_the_budget_allows(self) -> None:
+        base, _, paths = self.serve([self.limited("90"), (200, {}, b'{"ok": true}')])
+        slept: list[float] = []
+        self.assertEqual(self.budgeted(base, slept).call("GET", "/a"), {"ok": True})
+        self.assertEqual((slept, len(paths)), ([0.0, 90.0, 0.0], 2))
+
+    def test_a_429_whose_wait_passes_the_budget_ends_the_call_at_once(self) -> None:
+        base, _, paths = self.serve([self.limited("600")])
+        slept: list[float] = []
+        with self.assertRaisesRegex(MOD.RateLimited, r"HTTP 429 \(Retry-After 600 s\).*does not fit"):
+            self.budgeted(base, slept).call("GET", "/a")
+        self.assertEqual((slept, len(paths)), ([0.0], 1))
+
+    def test_three_429s_end_as_a_rate_limit_without_a_last_wait(self) -> None:
+        base, _, paths = self.serve([self.limited("5")] * 3)
+        slept: list[float] = []
+        with self.assertRaisesRegex(MOD.RateLimited, "gave up after 3 attempts"):
+            self.budgeted(base, slept).call("GET", "/a")
+        self.assertEqual((slept, len(paths)), ([0.0, 5.0, 0.0, 5.0, 0.0], 3))
+
+    def test_without_a_budget_a_429_waits_at_most_a_minute(self) -> None:
+        base, _, _ = self.serve([self.limited("90"), (200, {}, b"{}")])
+        slept: list[float] = []
+        api = MOD.Http(base, {}, 0.0, sleep=slept.append)
+        self.addCleanup(api.close)
+        self.assertEqual(api.call("GET", "/a"), {})
+        self.assertEqual(slept, [0.0, 60.0, 0.0])
+
+    def test_a_5xx_keeps_its_wait_capped_at_a_minute(self) -> None:
+        base, _, _ = self.serve([(503, {"Retry-After": "90"}, b"{}"), (200, {}, b"{}")])
+        slept: list[float] = []
+        self.assertEqual(self.budgeted(base, slept).call("GET", "/a"), {})
+        self.assertEqual(slept, [0.0, 60.0, 0.0])
 
 
 if __name__ == "__main__":

@@ -28,7 +28,9 @@ Without --apply it only logs what it would do. It never removes anything from Tr
 the plugin's login; while the token the plugin saved has expired, it skips that user until the plugin renews
 the token on its next Trakt call. Progress is saved before each play, and a run stops starting plays once
 TRAKT_GAP_FILLER_BUDGET_MINUTES have passed, so a slow run is carried on by the next one instead of being
-stopped from outside and started again from the first play.
+stopped from outside and started again from the first play. A rate limit (HTTP 429) the run cannot wait out
+within that budget also leaves the rest for the next run; it is a failure only once every run for an hour has
+been rate limited.
 """
 
 from __future__ import annotations
@@ -64,6 +66,9 @@ TIME_RE = re.compile(r"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d+))?(?:Z|\+00:00
 # The plugin scrobbles when playback stops; a play of the show at Jellyfin's season and number made this many
 # seconds either side of the playback is that scrobble.
 PLUGIN_WINDOW = 900.0
+# A rate limit is carried over to the next run; only when every run for this many seconds has been rate limited
+# is it reported as a failure.
+RATE_LIMIT_ALERT = 3600.0
 
 Clock = Callable[[], float]
 
@@ -77,8 +82,21 @@ class ApiError(RuntimeError):
     pass
 
 
+class RateLimited(ApiError):
+    """HTTP 429 that its Retry-After does not let this run wait out."""
+
+
 class Unresolved(Exception):
     pass
+
+
+def retry_after(value: str | None) -> float | None:
+    """Seconds from a Retry-After header in its delta-seconds form; None when it is absent or not a number."""
+    try:
+        seconds = float(value) if value else None
+    except ValueError:
+        return None
+    return seconds if seconds is not None and seconds >= 0 else None
 
 
 class Api(Protocol):
@@ -90,10 +108,21 @@ class Http:
 
     Calls share one kept-alive connection, opened again only after a failure. On 2026-10-27, 8 of 42 new
     connections from the host running this tool waited 2 to 19 s to connect (SYNs lost upstream), and a run that
-    opened a connection for every call (3 to 4 per played episode) ran past the unit's timeout."""
+    opened a connection for every call (3 to 4 per played episode) ran past the unit's timeout.
+
+    A 429 is waited out for its full Retry-After when that fits before the deadline (the run's time budget), and
+    raises RateLimited at once when it does not; without a deadline the wait is capped at a minute. On 2026-10-28
+    Trakt's Cloudflare edge answered a burst of about 400 GETs in 4 minutes with error 1015; the run retried a
+    minute apart, gave up and failed, though the next run finished the work."""
 
     def __init__(
-        self, base: str, headers: dict[str, str], spacing: float, sleep: Callable[[float], None] = time.sleep
+        self,
+        base: str,
+        headers: dict[str, str],
+        spacing: float,
+        sleep: Callable[[float], None] = time.sleep,
+        clock: Clock = time.time,
+        deadline: float | None = None,
     ) -> None:
         parts = urllib.parse.urlsplit(base.rstrip("/"))
         self.connection_class: type[http.client.HTTPConnection] = (
@@ -105,6 +134,8 @@ class Http:
         self.headers = headers
         self.spacing = spacing
         self.sleep = sleep
+        self.clock = clock
+        self.deadline = deadline
         self.connection: http.client.HTTPConnection | None = None
 
     def close(self) -> None:
@@ -135,7 +166,20 @@ class Http:
             if reply.get("Content-Encoding") == "gzip":
                 raw = gzip.decompress(raw)
             text = raw.decode("utf-8", "replace").strip()
-            if status == 429 or status >= 500:
+            if status == 429:
+                asked = retry_after(reply.get("Retry-After"))
+                wait = 2.0 * attempt if asked is None else asked
+                limit = reply.get("X-Ratelimit")
+                detail = f", X-Ratelimit {limit}" if limit else ""
+                last = f"HTTP 429 (Retry-After {wait:.0f} s{detail}): {text[:200]}"
+                if self.deadline is None:
+                    wait = min(wait, 60.0)
+                elif self.clock() + wait > self.deadline:
+                    raise RateLimited(f"{method} {path}: {last}; that wait does not fit this run's time budget")
+                if attempt < 3:
+                    self.sleep(wait)
+                continue
+            if status >= 500:
                 last = f"HTTP {status}: {text[:200]}"
                 self.sleep(min(float(reply.get("Retry-After") or 2.0 * attempt), 60.0))
                 continue
@@ -144,6 +188,8 @@ class Http:
             if status >= 400:
                 raise ApiError(f"{method} {path}: HTTP {status}: {text[:200]}")
             return json.loads(text) if text else None
+        if last.startswith("HTTP 429"):
+            raise RateLimited(f"{method} {path}: gave up after 3 attempts: {last}")
         raise ApiError(f"{method} {path}: gave up after 3 attempts: {last}")
 
 
@@ -410,7 +456,7 @@ def bind_account(state: dict[str, Any], user: TraktUser, account: str) -> int:
     return dropped
 
 
-def fill(
+def check_plays(
     jellyfin: Api,
     users: list[tuple[TraktUser, Api]],
     state: dict[str, Any],
@@ -421,8 +467,10 @@ def fill(
     settle: float,
     since: datetime | None,
     post_spacing: Callable[[], None],
-    deadline: float | None = None,
-    checkpoint: Callable[[], None] | None = None,
+    deadline: float | None,
+    checkpoint: Callable[[], None] | None,
+    tally: dict[str, int],
+    progress: dict[str, int],
 ) -> dict[str, int]:
     now = clock()
     cutoff = datetime.fromtimestamp(now - lookback, UTC)
@@ -430,23 +478,15 @@ def fill(
         cutoff = since
     for bucket in ("pending", "done", "alerted"):
         state[bucket] = {k: v for k, v in state.get(bucket, {}).items() if float(v) >= now - lookback - 86400.0}
-    tally = {
-        "played": 0,
-        "on_trakt": 0,
-        "pending": 0,
-        "would_add": 0,
-        "added": 0,
-        "unresolved": 0,
-        "excluded": 0,
-        "deferred": 0,
-    }
     stops = stop_times(jellyfin, cutoff)
     series_ids: dict[str, dict[str, str]] = {}
     for user, trakt in users:
+        progress["left"] = 0
         bind_account(state, user, str(trakt.call("GET", "/users/settings")["user"]["ids"]["slug"]))
         resolver = Resolver(trakt)
         plays = recent_played(jellyfin, user.jellyfin_id, cutoff)
         for index, (item, played) in enumerate(plays):
+            progress["left"] = len(plays) - index
             if checkpoint is not None:
                 # Keep what the earlier plays settled, so a run stopped from outside does not redo them.
                 checkpoint()
@@ -524,6 +564,67 @@ def fill(
     return tally
 
 
+def fill(
+    jellyfin: Api,
+    users: list[tuple[TraktUser, Api]],
+    state: dict[str, Any],
+    apply: bool,
+    clock: Clock,
+    notify: Callable[[str], None],
+    lookback: float,
+    settle: float,
+    since: datetime | None,
+    post_spacing: Callable[[], None],
+    deadline: float | None = None,
+    checkpoint: Callable[[], None] | None = None,
+) -> dict[str, int]:
+    """Check the recent plays (check_plays). When Trakt rate-limits longer than the run can wait, stop and leave the
+    plays not yet checked for the next run, which carries on from the progress saved before each play. It is an
+    error only once every run for RATE_LIMIT_ALERT seconds has been rate limited."""
+    limited_since = state.pop("rate_limited_since", None)
+    tally = {
+        "played": 0,
+        "on_trakt": 0,
+        "pending": 0,
+        "would_add": 0,
+        "added": 0,
+        "unresolved": 0,
+        "excluded": 0,
+        "deferred": 0,
+    }
+    progress = {"left": 0}
+    try:
+        return check_plays(
+            jellyfin,
+            users,
+            state,
+            apply,
+            clock,
+            notify,
+            lookback,
+            settle,
+            since,
+            post_spacing,
+            deadline,
+            checkpoint,
+            tally,
+            progress,
+        )
+    except RateLimited as error:
+        first = clock() if limited_since is None else float(limited_since)
+        state["rate_limited_since"] = first
+        if clock() - first >= RATE_LIMIT_ALERT:
+            since_text = trakt_time(datetime.fromtimestamp(first, UTC))
+            raise ApiError(f"Trakt has rate-limited every run since {since_text}: {error}") from error
+        tally["deferred"] = progress["left"]
+        log(
+            "WARN",
+            f"Trakt is rate limiting this host; the next run carries on ({progress['left']} played episodes "
+            f"not yet checked): {error}",
+        )
+        return tally
+
+
 def load_state(path: str) -> dict[str, Any]:
     try:
         with open(path, encoding="utf-8") as handle:
@@ -588,6 +689,7 @@ def main(argv: list[str]) -> int:
                                 "Authorization": f"Bearer {users[0].token}",
                             },
                             0.35,
+                            deadline=deadline,
                         ).call("GET", "/users/settings")
                     except ApiError:
                         return False
@@ -602,6 +704,7 @@ def main(argv: list[str]) -> int:
                         TRAKT_URL,
                         {"trakt-api-version": "2", "trakt-api-key": client, "Authorization": f"Bearer {u.token}"},
                         0.35,
+                        deadline=deadline,
                     ),
                 )
                 for u in users

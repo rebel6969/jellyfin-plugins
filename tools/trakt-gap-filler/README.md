@@ -43,6 +43,12 @@ carried on by the next run instead of being stopped by systemd and started over.
 kept-alive connection; on 2026-10-27 a run that opened a new connection for every call (3 to 4 per played
 episode) on a host losing SYNs upstream ran past the unit's 10-minute timeout, and every following run did the same.
 
+When Trakt rate-limits (HTTP 429), a run waits the full `Retry-After` if that fits in its time budget. If it doesn't
+fit, the run stops starting plays and leaves the rest to the next run, with a warning rather than a failure. The run
+fails, and so reports, only when every run for an hour has been rate limited. On 2026-10-28 Trakt's Cloudflare edge
+answered a burst of about 400 checks in 4 minutes (184 episodes marked played at once) with error 1015. The run
+retried a minute apart, gave up and failed, although the next run finished the work.
+
 ## Install
 
 ```sh
@@ -81,7 +87,7 @@ Overgeared S01E02 'Episode 2': 0 Trakt episodes aired within a day of 2026-10-04
 python3 -W error -m unittest test_trakt_gap_filler
 ```
 
-43 tests against fake Jellyfin and Trakt APIs built from the two real cases above, plus a loopback HTTP server for
-the kept-alive connection; each safety rule was also broken on purpose and caught by its test (23 of 23 for the
-original rules, 20 of 20 for the plugin-scrobble check, 2 of 2 for the expired-token skip, 3 of 3 for the per-play
-save, the time budget and the kept-alive connection).
+52 tests against fake Jellyfin and Trakt APIs built from the two real cases above, plus a loopback HTTP server for
+the kept-alive connection and the rate-limit waits. Each safety rule was also broken on purpose and caught by its
+test: 23 of 23 for the original rules, 20 of 20 for the plugin-scrobble check, 2 of 2 for the expired-token skip,
+3 of 3 for the per-play save, the time budget and the kept-alive connection, and 11 of 11 for the rate-limit handling.

@@ -119,9 +119,9 @@ Then install **Simkl Mark Sync** from the catalog and restart Jellyfin.
 
 ### Manually
 
-1. Download `simkl-mark-sync_1.3.0.0.zip` from the
-   [releases](https://github.com/rebel6969/jellyfin-plugins/releases/tag/simkl-mark-sync-v1.3.0.0).
-2. Extract it into `<jellyfin data dir>/plugins/Simkl Mark Sync_1.3.0.0/`.
+1. Download `simkl-mark-sync_1.4.0.0.zip` from the
+   [releases](https://github.com/rebel6969/jellyfin-plugins/releases/tag/simkl-mark-sync-v1.4.0.0).
+2. Extract it into `<jellyfin data dir>/plugins/Simkl Mark Sync_1.4.0.0/`.
 3. Restart Jellyfin.
 
 ### Check that it is active

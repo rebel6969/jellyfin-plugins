@@ -15,6 +15,11 @@ The user-menu change is CSS visual ordering, not DOM reordering: keyboard tab or
 
 ## Media Bar: `mediabar-homepage.patch`
 
+**Status (2026-11-02): retired, kept for reference only.** The official Media Bar has had the Jellyfin 12 homepage
+layout fix since 3.0.0.0 (confirmed in
+[issue #181](https://github.com/IAmParadox27/jellyfin-plugin-media-bar/issues/181) on 2026-09-24). The deployed
+server runs the official 3.0.2.0 unpatched, on auto-update. Do not apply this patch to a newer release.
+
 Apply to IAmParadox27/jellyfin-plugin-media-bar at the exact `media-bar` commit in `source-refs.json`. This is a patch to the plugin's embedded frontend source, **not** a standalone JavaScript injector or branding stylesheet.
 
 It:

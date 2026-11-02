@@ -14,7 +14,7 @@ public abstract record MarkChange(Guid UserId, Guid ItemId, bool Played, DateTim
 {
     /// <summary>
     /// Gets a value indicating whether the mark comes from a playback Jellyfin counted as finished rather than from a
-    /// manual mark. Only such a mark may be recorded as a rewatch.
+    /// manual mark. Both kinds may be recorded as a rewatch; this one only tells them apart in the log.
     /// </summary>
     public bool FromPlayback { get; init; }
 }

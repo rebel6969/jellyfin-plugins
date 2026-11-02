@@ -94,23 +94,14 @@ public sealed class MarkSyncProcessor
                 .ToList();
             var played = latest.Where(m => m.Played).ToList();
             var unplayed = latest.Where(m => !m.Played).ToList();
-            var finished = played.Where(m => m.FromPlayback).ToList();
-            if (finished.Count > 0
-                && _settings.TrackRewatches
-                && await HasPaidPlanAsync(userMarks.Key, clientId, user, cancellationToken).ConfigureAwait(false))
+            if (played.Count > 0)
             {
-                // Only a finished playback may become a rewatch; a manual mark is sent as a plain watch.
-                var manual = played.Where(m => !m.FromPlayback).ToList();
-                if (manual.Count > 0)
-                {
-                    await AddAsync(userMarks.Key, manual, clientId, user, allowRewatch: false, cancellationToken).ConfigureAwait(false);
-                }
-
-                await AddAsync(userMarks.Key, finished, clientId, user, allowRewatch: true, cancellationToken).ConfigureAwait(false);
-            }
-            else if (played.Count > 0)
-            {
-                await AddAsync(userMarks.Key, played, clientId, user, allowRewatch: false, cancellationToken).ConfigureAwait(false);
+                // A finished playback and a manual "Mark played" both become a rewatch of something Simkl already has
+                // as watched, but only on a paid plan. Otherwise each goes out as a plain watch, which Simkl ignores
+                // for an item it already has, so a re-watch on a free plan changes nothing there.
+                var allowRewatch = _settings.TrackRewatches
+                    && await HasPaidPlanAsync(userMarks.Key, clientId, user, cancellationToken).ConfigureAwait(false);
+                await AddAsync(userMarks.Key, played, clientId, user, allowRewatch, cancellationToken).ConfigureAwait(false);
             }
 
             if (unplayed.Count > 0)
@@ -140,7 +131,7 @@ public sealed class MarkSyncProcessor
         var plan = await _client.GetAccountTypeAsync(clientId, user, cancellationToken).ConfigureAwait(false);
         if (plan is null)
         {
-            _logger.LogWarning("Simkl: could not read the Simkl plan of user {UserId}; finished playbacks are sent as plain watches this time", userId);
+            _logger.LogWarning("Simkl: could not read the Simkl plan of user {UserId}; watches are sent as plain watches this time", userId);
             return false;
         }
 
@@ -148,7 +139,7 @@ public sealed class MarkSyncProcessor
         _plans[userId] = (user.Token, paid, _time.GetTimestamp());
         if (!paid)
         {
-            _logger.LogInformation("Simkl: rewatch tracking is on, but user {UserId} is on the Simkl {Plan} plan; finished playbacks are sent as plain watches", userId, plan);
+            _logger.LogInformation("Simkl: rewatch tracking is on, but user {UserId} is on the Simkl {Plan} plan; watches are sent as plain watches, and Simkl ignores one it already has", userId, plan);
         }
 
         return paid;

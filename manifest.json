@@ -60,6 +60,14 @@
     "category": "General",
     "versions": [
       {
+        "version": "1.4.0.0",
+        "targetAbi": "12.1.0.0",
+        "changelog": "With Track rewatches on and a Simkl PRO or VIP plan, a manual Mark played of something Simkl already has as watched now logs a rewatch, as Trakt logs a new play; before, only a finished playback could. On any other plan a mark stays a plain watch, which Simkl ignores for something already watched. Source and tests: plugins/simkl-mark-sync.",
+        "sourceUrl": "https://github.com/rebel6969/jellyfin-plugins/releases/download/simkl-mark-sync-v1.4.0.0/simkl-mark-sync_1.4.0.0.zip",
+        "checksum": "30672b07b56d9ad0f7a1363616f6f568",
+        "timestamp": "2026-11-02T16:25:37+00:00"
+      },
+      {
         "version": "1.3.0.0",
         "targetAbi": "12.1.0.0",
         "changelog": "Works with the official Simkl plugin 10: each login is sent with the client ID it was issued to (the pin flow's or the new OAuth 2 device flow's), and a login whose client ID cannot be told is skipped without holding up other users.",

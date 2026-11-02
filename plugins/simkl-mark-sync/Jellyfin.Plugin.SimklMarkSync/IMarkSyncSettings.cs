@@ -6,7 +6,7 @@ namespace Jellyfin.Plugin.SimklMarkSync;
 public interface IMarkSyncSettings
 {
     /// <summary>
-    /// Gets a value indicating whether finished playbacks may be recorded as rewatches.
+    /// Gets a value indicating whether finished playbacks and manual marks may be recorded as rewatches.
     /// </summary>
     bool TrackRewatches { get; }
 }

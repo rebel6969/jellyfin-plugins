@@ -11,9 +11,10 @@ namespace Jellyfin.Plugin.SimklMarkSync.Configuration;
 public sealed class PluginConfiguration : BasePluginConfiguration
 {
     /// <summary>
-    /// Gets or sets a value indicating whether a finished playback of something already watched is recorded on Simkl
-    /// as a rewatch. Simkl keeps rewatches only for PRO and VIP accounts; on a free account the playback is sent as a
-    /// plain watch. Off by default, as Simkl asks of apps.
+    /// Gets or sets a value indicating whether a finished playback or a manual "Mark played" of something Simkl already
+    /// has as watched is recorded on Simkl as a rewatch. Simkl keeps rewatches only for PRO and VIP accounts; on any
+    /// other plan the watch is sent as a plain watch, which Simkl ignores for an item it already has. Off by default,
+    /// as Simkl asks of apps.
     /// </summary>
     public bool TrackRewatches { get; set; }
 }

@@ -382,22 +382,22 @@ public sealed class MarkSyncProcessorTests
     }
 
     /// <summary>
-    /// On a PRO account, finished playbacks go out with allow_rewatch and manual marks without it.
+    /// On a PRO account, finished playbacks and manual marks go out together, with allow_rewatch.
     /// </summary>
     /// <returns>A task that completes when the test has run.</returns>
     [Fact]
-    public async Task SendsFinishedPlaybacksAsRewatchesOnAPaidPlan()
+    public async Task SendsFinishedPlaybacksAndManualMarksAsRewatchesOnAPaidPlan()
     {
         _settings.TrackRewatches = true;
         _plan = "pro";
-        _addResult = new(1, 0, 0, []) { RewatchStatuses = ["completed"] };
+        _addResult = new(1, 0, 0, []) { RewatchStatuses = ["completed", "completed"] };
 
         await _processor.ProcessAsync([Finished("tt1"), Marks.Movie("tt2")], Token);
 
-        Assert.Equal([false, true], _rewatchFlags);
-        Assert.Equal("tt2", Assert.Single(_added[0].Request.Movies!).Ids["imdb"]);
-        Assert.Equal("tt1", Assert.Single(_added[1].Request.Movies!).Ids["imdb"]);
-        Assert.Contains(_logger.At(LogLevel.Information), m => m.Contains("rewatch status completed for 1 items", StringComparison.Ordinal));
+        Assert.Equal([true], _rewatchFlags);
+        Assert.Equal(["tt1", "tt2"], Assert.Single(_added).Request.Movies!.Select(m => m.Ids["imdb"].ToString()).Order(StringComparer.Ordinal));
+        Assert.Equal(1, _planReads);
+        Assert.Contains(_logger.At(LogLevel.Information), m => m.Contains("rewatch status completed for 2 items", StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -493,13 +493,48 @@ public sealed class MarkSyncProcessorTests
     }
 
     /// <summary>
-    /// Manual marks alone never need the plan.
+    /// On a PRO account a manual "Mark played" alone goes out with allow_rewatch, so something Simkl already has as
+    /// watched is logged as a rewatch, as Trakt logs a new play for it.
     /// </summary>
     /// <returns>A task that completes when the test has run.</returns>
     [Fact]
-    public async Task ReadsNoPlanForManualMarksAlone()
+    public async Task SendsManualMarksAsRewatchesOnAPaidPlan()
     {
         _settings.TrackRewatches = true;
+        _plan = "pro";
+
+        await _processor.ProcessAsync([Marks.Movie("tt1")], Token);
+
+        Assert.Equal([true], _rewatchFlags);
+        Assert.Equal(1, _planReads);
+    }
+
+    /// <summary>
+    /// On a free account a manual "Mark played" goes out as a plain watch, never with allow_rewatch, so Simkl ignores
+    /// it for something already watched and records it for something new.
+    /// </summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task SendsManualMarksAsPlainWatchesOnAFreePlan()
+    {
+        _settings.TrackRewatches = true;
+        _plan = "free";
+
+        await _processor.ProcessAsync([Marks.Movie("tt1")], Token);
+
+        Assert.Equal([false], _rewatchFlags);
+        Assert.Equal("tt1", Assert.Single(Assert.Single(_added).Request.Movies!).Ids["imdb"]);
+        Assert.Equal(1, _planReads);
+    }
+
+    /// <summary>
+    /// With rewatch tracking off, a manual mark alone goes out as a plain watch and the plan is never read.
+    /// </summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task ReadsNoPlanWhenRewatchesAreOff()
+    {
+        _plan = "pro";
 
         await _processor.ProcessAsync([Marks.Movie("tt1")], Token);
 

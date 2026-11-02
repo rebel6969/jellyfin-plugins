@@ -49,9 +49,12 @@ included. So:
 - **Track rewatches** on the plugin's settings page (Dashboard › Plugins › Simkl Mark Sync) is **off by default**, as
   Simkl asks of apps.
 - When it is on, the plugin reads your plan from Simkl (`GET /users/settings`, cached for 6 hours) before sending
-  finished playbacks. On PRO or VIP they go out with `allow_rewatch=yes`; on a free plan, or when the plan cannot be
-  read, they go out as plain watches. A `pro_required` answer makes the plugin read the plan again on the next batch.
-- Only finished playbacks can become rewatches. A manual "Mark played" is always sent as a plain watch.
+  watches. On PRO or VIP they go out with `allow_rewatch=yes`; on a free plan, or when the plan cannot be read, they
+  go out as plain watches. A `pro_required` answer makes the plugin read the plan again on the next batch.
+- Since 1.4.0.0 a manual "Mark played" is treated like a finished playback: on PRO or VIP, marking something Simkl
+  already has as watched logs a rewatch, as Trakt logs a new play. On a free plan the mark stays a plain watch, which
+  Simkl ignores for something already watched, so nothing changes there. Marking something only to correct its
+  state on a paid plan also logs a rewatch.
 - Simkl absorbs two watches of the same item less than two days apart, so a playback the official plugin also
   scrobbled is never counted twice.
 

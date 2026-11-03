@@ -49,6 +49,12 @@ fails, and so reports, only when every run for an hour has been rate limited. On
 answered a burst of about 400 checks in 4 minutes (184 episodes marked played at once) with error 1015. The run
 retried a minute apart, gave up and failed, although the next run finished the work.
 
+When Jellyfin or Trakt does not answer a call (a network error or a 5xx on all three attempts), the run likewise stops
+and leaves the rest to the next run with a warning, and fails only when every run for an hour has met it. Other errors
+(a 4xx such as a refused token) still fail the run at once. On 2026-11-03 Jellyfin was stopped for 15 minutes while
+the host's update held Docker. The run in between met refused connections, failed and alerted, and the first run after
+Jellyfin came back found all 64 recent plays already on Trakt.
+
 ## Install
 
 ```sh
@@ -87,7 +93,9 @@ Overgeared S01E02 'Episode 2': 0 Trakt episodes aired within a day of 2026-10-04
 python3 -W error -m unittest test_trakt_gap_filler
 ```
 
-52 tests against fake Jellyfin and Trakt APIs built from the two real cases above, plus a loopback HTTP server for
-the kept-alive connection and the rate-limit waits. Each safety rule was also broken on purpose and caught by its
-test: 23 of 23 for the original rules, 20 of 20 for the plugin-scrobble check, 2 of 2 for the expired-token skip,
-3 of 3 for the per-play save, the time budget and the kept-alive connection, and 11 of 11 for the rate-limit handling.
+61 tests against fake Jellyfin and Trakt APIs built from the two real cases above, plus a loopback HTTP server for
+the kept-alive connection and the rate-limit waits, and a loopback port nothing listens on for a server that is down.
+Each safety rule was also broken on purpose and caught by its test: 23 of 23 for the original rules, 20 of 20 for the
+plugin-scrobble check, 2 of 2 for the expired-token skip, 3 of 3 for the per-play save, the time budget and the
+kept-alive connection, 11 of 11 for the rate-limit handling, and 6 of 6 for the handling of a server that does not
+answer.

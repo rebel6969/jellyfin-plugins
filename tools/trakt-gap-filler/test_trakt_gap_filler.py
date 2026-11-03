@@ -9,6 +9,7 @@ import importlib.util
 import io
 import json
 import os
+import socket
 import sys
 import tempfile
 import threading
@@ -728,6 +729,48 @@ class MainTests(unittest.TestCase):
         self.assertEqual(state["rate_limited_since"], at("2026-10-05T06:00:00+00:00"))
         self.assertIn("deferred=1", err.getvalue())
 
+    def jellyfin_down(
+        self, base: str, headers: dict[str, str], spacing: float, deadline: float | None = None
+    ) -> object:
+        """Http as main builds it, with Jellyfin stopped: its client meets a loopback port nothing listens on."""
+        if base == MOD.TRAKT_URL:
+            return self.http(base, headers, spacing, deadline)
+        stopped = REAL_HTTP(refused_base(), headers, spacing, sleep=lambda _: None)
+        self.addCleanup(stopped.close)
+        return stopped
+
+    def run_main_with_jellyfin_down(self) -> tuple[int, mock.MagicMock, str]:
+        err = io.StringIO()
+        with (
+            mock.patch.dict(os.environ, self.env),
+            mock.patch.object(MOD, "STATE_DIR", str(self.state_dir)),
+            mock.patch.object(MOD, "Http", side_effect=self.jellyfin_down),
+            mock.patch.object(MOD, "send_telegram") as telegram,
+            mock.patch.object(MOD.time, "time", return_value=at("2026-10-05T06:00:00+00:00")),
+            mock.patch.object(MOD.time, "sleep"),
+            redirect_stderr(err),
+        ):
+            code: int = MOD.main(["--apply"])
+        return code, telegram, err.getvalue()
+
+    def test_regression_jellyfin_stopped_exits_0_without_an_alert(self) -> None:
+        # 2026-11-03 00:15Z: Docker was held for 15 minutes; the run met Jellyfin refusing connections, exited 1 and
+        # alerted twice (its own message and the unit's OnFailure hook).
+        code, telegram, log = self.run_main_with_jellyfin_down()
+        self.assertEqual(code, 0)
+        telegram.assert_not_called()
+        state = json.loads((self.state_dir / "state.json").read_text())
+        self.assertEqual(state["unavailable_since"], at("2026-10-05T06:00:00+00:00"))
+        self.assertIn("Connection refused", log)
+
+    def test_jellyfin_stopped_on_every_run_for_an_hour_exits_1_with_an_alert(self) -> None:
+        self.state_dir.mkdir()
+        state = {"unavailable_since": at("2026-10-05T05:00:00+00:00"), "client_id": "d" * 64}
+        (self.state_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        code, telegram, _ = self.run_main_with_jellyfin_down()
+        self.assertEqual(code, 1)
+        self.assertIn("no answer on any run since 2026-10-05T05:00:00.000Z", telegram.call_args.args[0])
+
 
 class Stopped(Exception):
     """Stands in for systemd stopping a run in the middle."""
@@ -917,6 +960,107 @@ class HttpTests(unittest.TestCase):
         slept: list[float] = []
         self.assertEqual(self.budgeted(base, slept).call("GET", "/a"), {})
         self.assertEqual(slept, [0.0, 60.0, 0.0])
+
+    def test_regression_three_refused_connections_end_as_unavailable(self) -> None:
+        # 2026-11-03 00:15Z: Jellyfin was stopped, so every attempt of the run's first call was refused.
+        slept: list[float] = []
+        api = MOD.Http(refused_base(), {}, 0.0, sleep=slept.append)
+        self.addCleanup(api.close)
+        with self.assertRaisesRegex(MOD.Unavailable, "gave up after 3 attempts: network error: .*Connection refused"):
+            api.call("GET", "/System/ActivityLog/Entries")
+        self.assertEqual(slept, [0.0, 2.0, 0.0, 4.0, 0.0, 6.0])
+
+    def test_three_5xx_answers_end_as_unavailable(self) -> None:
+        # Jellyfin answers like this while it loads after a restart (2026-10-27).
+        base, _, paths = self.serve([(503, {}, b"Jellyfin Server is loading. Please try again shortly.")] * 3)
+        slept: list[float] = []
+        with self.assertRaisesRegex(MOD.Unavailable, "HTTP 503: Jellyfin Server is loading"):
+            self.budgeted(base, slept).call("GET", "/a")
+        self.assertEqual((slept, len(paths)), ([0.0, 2.0, 0.0, 4.0, 0.0, 6.0], 3))
+
+    def test_a_4xx_is_an_error_at_once_not_unavailable(self) -> None:
+        # A refused token or a wrong path does not mend itself by the next run, so it still fails the run.
+        base, _, paths = self.serve([(401, {}, b'{"error":"unauthorized"}')])
+        with self.assertRaisesRegex(MOD.ApiError, "HTTP 401") as caught:
+            self.budgeted(base, []).call("GET", "/a")
+        self.assertNotIsInstance(caught.exception, MOD.Unavailable)
+        self.assertEqual(len(paths), 1)
+
+
+REAL_HTTP = MOD.Http
+
+
+def refused_base() -> str:
+    """A loopback URL nothing listens on: the port of a socket bound and closed again, so a connect is refused."""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port: int = probe.getsockname()[1]
+    return f"http://127.0.0.1:{port}"
+
+
+class UnavailableTests(FillBase):
+    """2026-11-03: a host update held Docker for 15 minutes, so Jellyfin refused connections, and the run at 00:15Z
+    failed and alerted although the next run after Jellyfin came back had nothing to redo. Here the real client
+    meets a server that is down: a loopback port nothing listens on."""
+
+    def jellyfin_down(self) -> None:
+        stopped = REAL_HTTP(refused_base(), {}, 0.0, sleep=lambda _: None)
+        self.addCleanup(stopped.close)
+        patcher = mock.patch.object(self.jellyfin, "call", side_effect=stopped.call)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_regression_jellyfin_not_answering_is_carried_over_without_an_alert(self) -> None:
+        self.jellyfin_down()
+        tally = self.run_fill()
+        self.assertEqual((tally["played"], tally["added"], tally["deferred"]), (0, 0, 0))
+        self.assertEqual(self.state["unavailable_since"], self.now)
+        self.assertIn("no answer, so the next run carries on (0 listed plays not yet checked)", self.log)
+        self.assertIn("GET /System/ActivityLog/Entries: gave up after 3 attempts: network error:", self.log)
+        self.assertEqual((self.notes, self.trakt.posts), ([], []))
+
+    def test_a_run_that_gets_its_answers_clears_the_record(self) -> None:
+        self.state["unavailable_since"] = self.now - 1800.0
+        self.assertEqual(self.run_fill()["deferred"], 0)
+        self.assertNotIn("unavailable_since", self.state)
+
+    def test_not_answering_is_an_error_only_once_every_run_for_an_hour_met_it(self) -> None:
+        self.jellyfin_down()
+        self.state["unavailable_since"] = self.now - 3599.0
+        self.assertEqual(self.run_fill()["deferred"], 0)
+        self.assertEqual(self.state["unavailable_since"], self.now - 3599.0)
+        self.state["unavailable_since"] = self.now - 3600.0
+        with self.assertRaisesRegex(MOD.ApiError, "no answer on any run since 2026-10-05T05:00:00.000Z: GET /System"):
+            self.run_fill()
+
+    def test_trakt_not_answering_mid_run_leaves_the_rest_for_the_next_run(self) -> None:
+        second = copy.deepcopy(ITEM)
+        second["Id"] = "0b1b5d77a1f84b6aa3a3a30cbd1f7c11"
+        second["UserData"]["LastPlayedDate"] = "2026-10-05T05:10:00.0000000Z"
+        self.jellyfin.items.append(second)
+        self.trakt.history[14531280] = [history_row(1, 26, "2026-10-05T05:33:00.000Z", 14531280)]
+        stopped = REAL_HTTP(refused_base(), {}, 0.0, sleep=lambda _: None)
+        self.addCleanup(stopped.close)
+        answer = self.trakt.call
+        history_calls = 0
+
+        def stop_answering_after_the_first_history_check(
+            method: str, path: str, query: dict[str, str] | None = None, body: object = None
+        ) -> object:
+            nonlocal history_calls
+            if path.startswith("/sync/history/episodes/"):
+                history_calls += 1
+                if history_calls >= 2:
+                    return stopped.call(method, path, query, body)
+            return answer(method, path, query, body)
+
+        with mock.patch.object(self.trakt, "call", side_effect=stop_answering_after_the_first_history_check):
+            tally = self.run_fill()
+        self.assertEqual((tally["on_trakt"], tally["deferred"]), (1, 1))
+        self.assertIn(f"{USER}:{ITEM['Id']}:2026-10-05T05:29:52.000Z", self.state["done"])
+        self.assertEqual(self.state["unavailable_since"], self.now)
+        self.assertIn("no answer, so the next run carries on (1 listed plays not yet checked)", self.log)
+        self.assertEqual((self.notes, self.trakt.posts), ([], []))
 
 
 if __name__ == "__main__":

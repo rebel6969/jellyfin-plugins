@@ -30,7 +30,9 @@ the token on its next Trakt call. Progress is saved before each play, and a run 
 TRAKT_GAP_FILLER_BUDGET_MINUTES have passed, so a slow run is carried on by the next one instead of being
 stopped from outside and started again from the first play. A rate limit (HTTP 429) the run cannot wait out
 within that budget also leaves the rest for the next run; it is a failure only once every run for an hour has
-been rate limited.
+been rate limited. Jellyfin or Trakt not answering (a network error or a 5xx on all three attempts of a call, as
+while Jellyfin is stopped or restarting) is carried over the same way, and is a failure only once every run for an
+hour has met it.
 """
 
 from __future__ import annotations
@@ -69,6 +71,10 @@ PLUGIN_WINDOW = 900.0
 # A rate limit is carried over to the next run; only when every run for this many seconds has been rate limited
 # is it reported as a failure.
 RATE_LIMIT_ALERT = 3600.0
+# Likewise for Jellyfin or Trakt not answering a call after its retries. On 2026-11-03 Jellyfin was stopped for
+# 15 minutes (a Docker hold during a host update) and the run in between failed and alerted, though the next run
+# after Jellyfin came back had nothing to redo; on 2026-10-27 a run met Jellyfin still loading after a restart.
+UNAVAILABLE_ALERT = 3600.0
 
 Clock = Callable[[], float]
 
@@ -84,6 +90,10 @@ class ApiError(RuntimeError):
 
 class RateLimited(ApiError):
     """HTTP 429 that its Retry-After does not let this run wait out."""
+
+
+class Unavailable(ApiError):
+    """A network error or a 5xx answer on all three attempts of a call: the server is down, restarting or failing."""
 
 
 class Unresolved(Exception):
@@ -190,7 +200,8 @@ class Http:
             return json.loads(text) if text else None
         if last.startswith("HTTP 429"):
             raise RateLimited(f"{method} {path}: gave up after 3 attempts: {last}")
-        raise ApiError(f"{method} {path}: gave up after 3 attempts: {last}")
+        # Only network errors and 5xx answers come back round the loop, so the server did not answer this call.
+        raise Unavailable(f"{method} {path}: gave up after 3 attempts: {last}")
 
 
 def send_telegram(text: str) -> None:
@@ -578,10 +589,12 @@ def fill(
     deadline: float | None = None,
     checkpoint: Callable[[], None] | None = None,
 ) -> dict[str, int]:
-    """Check the recent plays (check_plays). When Trakt rate-limits longer than the run can wait, stop and leave the
-    plays not yet checked for the next run, which carries on from the progress saved before each play. It is an
-    error only once every run for RATE_LIMIT_ALERT seconds has been rate limited."""
+    """Check the recent plays (check_plays). When Trakt rate-limits longer than the run can wait, or Jellyfin or
+    Trakt does not answer a call after its retries, stop and leave the plays not yet checked for the next run, which
+    carries on from the progress saved before each play. Each is an error only once every run for RATE_LIMIT_ALERT
+    or UNAVAILABLE_ALERT seconds has ended that way."""
     limited_since = state.pop("rate_limited_since", None)
+    unavailable_since = state.pop("unavailable_since", None)
     tally = {
         "played": 0,
         "on_trakt": 0,
@@ -621,6 +634,18 @@ def fill(
             "WARN",
             f"Trakt is rate limiting this host; the next run carries on ({progress['left']} played episodes "
             f"not yet checked): {error}",
+        )
+        return tally
+    except Unavailable as error:
+        first = clock() if unavailable_since is None else float(unavailable_since)
+        state["unavailable_since"] = first
+        if clock() - first >= UNAVAILABLE_ALERT:
+            since_text = trakt_time(datetime.fromtimestamp(first, UTC))
+            raise ApiError(f"no answer on any run since {since_text}: {error}") from error
+        tally["deferred"] = progress["left"]
+        log(
+            "WARN",
+            f"no answer, so the next run carries on ({progress['left']} listed plays not yet checked): {error}",
         )
         return tally
 
